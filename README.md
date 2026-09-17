@@ -5,15 +5,8 @@ Alexa/Android account. HomeKit-only systems are not supported.
 
 ## Project Status
 
-Core shower controls from Home Assistant and timely sensor updates have been
-verified with a live shower.
-
-> [!WARNING]
-> The preset manager is implemented and covered by offline, APK-derived
-> protocol tests, but creating, editing, deleting, reordering, and synchronizing
-> presets with the physical controller have not yet been tested on live
-> hardware. Treat preset management as experimental and use it only when you
-> can verify the result in the Moen app and on the controller.
+Core shower controls, timely sensor updates, preset activation, and preset
+management have been verified with a live shower and physical controller.
 
 ## Features
 
@@ -66,13 +59,15 @@ API and Pusher service; local-LAN control is not implemented.
 - Use the power switch for direct on/off control.
 - Use the outlet switches to enable or disable individual shower heads, hand
   showers, tub spouts, or body sprays.
+- Outlet names and Home Assistant icons follow the outlet types configured in
+  the Moen app while retaining the physical outlet position for control.
 - Press a preset button to activate the preset currently assigned to that
   position.
 
 Entity IDs are assigned by Home Assistant and may differ from the examples in
 this document.
 
-### Experimental preset management
+### Preset management
 
 Open **Settings** → **Devices & services**, find **U by Moen**, and select
 **Configure**. Accounts with multiple showers are prompted to choose a device;
@@ -100,8 +95,8 @@ update, it attempts to synchronize positions 1 and 2 to the controller. If that
 step is temporarily unavailable, the cloud change remains saved and controller
 synchronization is retried after reconnecting.
 
-Preset writes and controller synchronization described above have not yet been
-validated against live hardware.
+Preset creation, editing, deletion, reordering, and controller synchronization
+have been validated against a live shower and physical controller.
 
 ## Entity Reference
 
@@ -203,16 +198,13 @@ entities:
 - While Pusher is healthy, an older REST response cannot overwrite newer live
   shower state.
 - Preset positions 1 and 2 are sent to the controller with a settings message,
-  not a preset-activation command. This preset synchronization behavior is
-  based on the Android protocol and offline tests but remains unverified on a
-  live controller.
+  not a preset-activation command. This Android-compatible synchronization
+  behavior has been verified on a live controller.
 
 ## Known Limitations
 
 - Moen cloud and Pusher availability are required for control and updates.
 - The APK's local-LAN control path is not implemented.
-- Preset creation, editing, deletion, reordering, and controller
-  synchronization are not yet live-tested.
 - This integration targets Alexa/Android accounts, not HomeKit-only systems.
 
 ## Troubleshooting
@@ -239,7 +231,6 @@ entities:
 
 ### Preset management fails
 
-- Remember that the preset flow has not yet been tested on live hardware.
 - Check the Home Assistant log for `Preset create failed`, `Preset edit failed`,
   `Preset move failed`, or `Preset delete failed`. The warning includes the
   request method, endpoint, HTTP status, optional Moen request ID, and a
@@ -276,8 +267,8 @@ before posting them publicly.
 
 ## Contributing
 
-Contributions and live-device preset test reports are welcome. Please open an
-issue or pull request and remove all credentials and tokens from logs or
+Contributions and additional live-device test reports are welcome. Please open
+an issue or pull request and remove all credentials and tokens from logs or
 captures.
 
 Come see our other apps and integrations at [WeaveHub](https://weavehub.app).
