@@ -29,8 +29,8 @@
         }
       },
       "preset_menu": {
-        "title": "Manage {device} presets",
-        "description": "Current presets: {presets}\n\nLast result: {status}",
+        "title": "Manage presets",
+        "description": "Shower: {device}\n\nCurrent presets: {presets}\n\nLast result: {status}",
         "menu_options": {
           "create": "Create preset",
           "edit": "Edit preset",

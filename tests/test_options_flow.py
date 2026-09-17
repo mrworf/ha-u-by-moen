@@ -109,6 +109,11 @@ async def test_single_device_create_returns_to_menu() -> None:
     result = await flow.async_step_create(form_values())
 
     assert initial["type"] == "menu"
+    assert initial["description_placeholders"] == {
+        "device": "Main",
+        "presets": "1: One, 2: Two",
+        "status": "",
+    }
     assert form["step_id"] == "create"
     assert result["type"] == "menu"
     assert "synchronized" in result["description_placeholders"]["status"]
