@@ -271,6 +271,7 @@ class MoenOptionsFlow(config_entries.OptionsFlow):
                 )
                 return await self._mutation_complete(result.controller_synced)
             except (PresetConflictError, PresetValidationError, MoenApiError) as err:
+                self._log_preset_api_error("delete", err)
                 if isinstance(err, PresetConflictError):
                     self._capture_baseline()
                     if not any(
@@ -350,6 +351,8 @@ class MoenOptionsFlow(config_entries.OptionsFlow):
             )
             return await self._mutation_complete(result.controller_synced)
         except (PresetConflictError, PresetValidationError, MoenApiError) as err:
+            operation = "edit" if error_step == "edit_preset" else error_step
+            self._log_preset_api_error(operation, err)
             if isinstance(err, PresetConflictError):
                 self._capture_baseline()
             if error_step == "move":
@@ -377,6 +380,18 @@ class MoenOptionsFlow(config_entries.OptionsFlow):
         if isinstance(err, PresetValidationError):
             return err.code
         return "cannot_connect"
+
+    def _log_preset_api_error(self, operation: str, err: Exception) -> None:
+        """Log safe service diagnostics while preserving specific form errors."""
+        if not isinstance(err, MoenApiError):
+            return
+        serial_number = self._serial_number or "unknown"
+        _LOGGER.warning(
+            "Preset %s failed for device %s: %s",
+            operation,
+            serial_number,
+            err,
+        )
 
     def _new_preset_defaults(self) -> dict[str, Any]:
         return {

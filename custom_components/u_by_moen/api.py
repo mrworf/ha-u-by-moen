@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from typing import Any
 
 import aiohttp
@@ -11,6 +13,23 @@ import aiohttp
 from .const import API_AUTHENTICATE, API_BASE_URL, API_SHOWER_DETAIL, API_SHOWERS
 
 _LOGGER = logging.getLogger(__name__)
+
+MAX_ERROR_BODY_LENGTH = 2048
+MAX_REQUEST_ID_LENGTH = 128
+_SENSITIVE_KEY_PARTS = (
+    "auth",
+    "credential",
+    "email",
+    "password",
+    "secret",
+    "token",
+)
+_SENSITIVE_TEXT_PATTERN = re.compile(
+    r"(?i)\b(auth(?:orization)?|credential|email|password|secret|token)"
+    r"\b\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;}&]+)"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+_EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 
 
 class MoenApiError(Exception):
@@ -24,9 +43,97 @@ class MoenAuthError(MoenApiError):
 class MoenApiHttpError(MoenApiError):
     """HTTP error returned by the U by Moen API."""
 
-    def __init__(self, path: str, status: int) -> None:
-        super().__init__(f"U by Moen request to {path} returned HTTP {status}")
+    def __init__(
+        self,
+        method: str,
+        path: str,
+        status: int,
+        response_body: str = "",
+        request_id: str | None = None,
+    ) -> None:
+        self.method = method.upper()
+        self.path = path
         self.status = status
+        self.response_body = _sanitize_error_body(response_body)
+        self.request_id = _sanitize_request_id(request_id)
+        details = [f"U by Moen {self.method} {path} returned HTTP {status}"]
+        if self.request_id:
+            details.append(f"request_id={self.request_id}")
+        if self.response_body:
+            details.append(f"response={self.response_body}")
+        super().__init__("; ".join(details))
+
+
+def _sanitize_text(value: str) -> str:
+    """Redact common secret patterns and normalize text for one-line logs."""
+    normalized = " ".join(value.split())
+    normalized = _BEARER_PATTERN.sub("Bearer <redacted>", normalized)
+    normalized = _SENSITIVE_TEXT_PATTERN.sub(
+        lambda match: f"{match.group(1)}=<redacted>", normalized
+    )
+    return _EMAIL_PATTERN.sub("<redacted-email>", normalized)
+
+
+def _redact_json(value: Any) -> Any:
+    """Recursively redact sensitive JSON fields and string values."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                "<redacted>"
+                if any(part in str(key).lower() for part in _SENSITIVE_KEY_PARTS)
+                else _redact_json(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_json(item) for item in value]
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    return value
+
+
+def _sanitize_error_body(body: str) -> str:
+    """Return a bounded, one-line, credential-safe response body."""
+    if not body:
+        return ""
+    try:
+        sanitized = json.dumps(
+            _redact_json(json.loads(body)),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+    except (json.JSONDecodeError, TypeError, ValueError):
+        sanitized = _sanitize_text(body)
+    if len(sanitized) <= MAX_ERROR_BODY_LENGTH:
+        return sanitized
+    return f"{sanitized[:MAX_ERROR_BODY_LENGTH]}...<truncated>"
+
+
+def _sanitize_request_id(request_id: str | None) -> str | None:
+    """Return a bounded, single-line server request identifier."""
+    if not request_id:
+        return None
+    return _sanitize_text(request_id)[:MAX_REQUEST_ID_LENGTH] or None
+
+
+async def _error_response_context(
+    response: aiohttp.ClientResponse,
+) -> tuple[str, str | None]:
+    """Read safe diagnostic context from an HTTP error response."""
+    try:
+        body = await response.text(errors="replace")
+    except (aiohttp.ClientError, LookupError, UnicodeError, ValueError):
+        body = "<response body unavailable>"
+    headers = response.headers
+    request_id = next(
+        (
+            headers.get(name)
+            for name in ("X-Request-ID", "Request-ID", "X-Correlation-ID")
+            if headers.get(name)
+        ),
+        None,
+    )
+    return body, request_id
 
 
 class MoenApi:
@@ -122,16 +229,33 @@ class MoenApi:
                         allow_empty=allow_empty,
                     )
                 if response.status in (401, 403):
-                    raise MoenAuthError("U by Moen authorization failed")
+                    body, request_id = await _error_response_context(response)
+                    http_error = MoenApiHttpError(
+                        method,
+                        path,
+                        response.status,
+                        body,
+                        request_id,
+                    )
+                    raise MoenAuthError(str(http_error)) from http_error
                 if response.status >= 400:
-                    raise MoenApiHttpError(path, response.status)
+                    body, request_id = await _error_response_context(response)
+                    raise MoenApiHttpError(
+                        method,
+                        path,
+                        response.status,
+                        body,
+                        request_id,
+                    )
                 if response.status == 204 or allow_empty:
                     return None
                 return await response.json()
         except (MoenAuthError, MoenApiHttpError):
             raise
         except (aiohttp.ClientError, ValueError) as err:
-            raise MoenApiError(f"U by Moen request failed for {path}") from err
+            raise MoenApiError(
+                f"U by Moen {method.upper()} {path} failed ({type(err).__name__})"
+            ) from err
 
     async def get_devices(self) -> list[dict[str, Any]]:
         """Get the account's showers."""

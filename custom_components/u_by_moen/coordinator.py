@@ -163,6 +163,11 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
         """Replace the cloud preset list if the form baseline is still current."""
         lock = self._preset_locks.setdefault(serial_number, asyncio.Lock())
         async with lock:
+            _LOGGER.debug(
+                "Starting preset replacement for device %s (%d presets)",
+                serial_number,
+                len(presets),
+            )
             current = await self.api.get_device_details(serial_number)
             self._assert_preset_baseline(current, baseline_fingerprint)
             validated = validate_presets(
@@ -171,9 +176,16 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
                 single_outlet_mode=bool(current.get("single_outlet_mode", False)),
             )
             await self.api.update_presets(serial_number, current, validated)
+            _LOGGER.debug("Cloud preset replacement accepted for %s", serial_number)
             refreshed = await self._async_refresh_device(serial_number)
+            _LOGGER.debug("Refreshed %s after preset replacement", serial_number)
             synced = await self._async_sync_controller_presets(
                 serial_number, refreshed.get("presets", [])
+            )
+            _LOGGER.debug(
+                "Preset replacement complete for %s; controller sync %s",
+                serial_number,
+                "confirmed" if synced else "pending",
             )
             return PresetMutationResult(synced)
 
@@ -186,6 +198,11 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
         """Delete a cloud preset if at least two will remain."""
         lock = self._preset_locks.setdefault(serial_number, asyncio.Lock())
         async with lock:
+            _LOGGER.debug(
+                "Starting preset deletion for device %s at position %d",
+                serial_number,
+                position,
+            )
             current = await self.api.get_device_details(serial_number)
             self._assert_preset_baseline(current, baseline_fingerprint)
             presets = current.get("presets", [])
@@ -194,9 +211,16 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
             if not any(item.get("position") == position for item in presets):
                 raise PresetValidationError("preset_missing")
             await self.api.delete_preset(serial_number, position)
+            _LOGGER.debug("Cloud preset deletion accepted for %s", serial_number)
             refreshed = await self._async_refresh_device(serial_number)
+            _LOGGER.debug("Refreshed %s after preset deletion", serial_number)
             synced = await self._async_sync_controller_presets(
                 serial_number, refreshed.get("presets", [])
+            )
+            _LOGGER.debug(
+                "Preset deletion complete for %s; controller sync %s",
+                serial_number,
+                "confirmed" if synced else "pending",
             )
             return PresetMutationResult(synced)
 

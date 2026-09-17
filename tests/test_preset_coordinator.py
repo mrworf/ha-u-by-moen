@@ -1,6 +1,7 @@
 """Tests for authoritative preset mutation and controller synchronization."""
 
 import asyncio
+import logging
 
 import pytest
 
@@ -122,6 +123,27 @@ async def test_cloud_update_survives_controller_sync_failure() -> None:
     assert api.updated[0][2] == updated
     assert instance.devices["SERIAL"]["presets"] == updated
     assert "SERIAL" in instance._controller_sync_needed
+
+
+@pytest.mark.asyncio
+async def test_successful_cloud_update_logs_safe_lifecycle(caplog) -> None:
+    original = [preset(1, "One"), preset(2, "Two")]
+    updated = [preset(1, "Sensitive preset title"), preset(2, "Two")]
+    api = FakeApi([original, updated])
+    instance = coordinator(api, DisconnectedPusher(), original)
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.u_by_moen.coordinator"
+    ):
+        await instance.async_replace_presets(
+            "SERIAL", preset_fingerprint(original), updated
+        )
+
+    assert "Starting preset replacement for device SERIAL (2 presets)" in caplog.text
+    assert "Cloud preset replacement accepted for SERIAL" in caplog.text
+    assert "Refreshed SERIAL after preset replacement" in caplog.text
+    assert "controller sync pending" in caplog.text
+    assert "Sensitive preset title" not in caplog.text
 
 
 @pytest.mark.asyncio

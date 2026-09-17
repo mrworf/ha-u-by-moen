@@ -1,16 +1,25 @@
 """Tests for APK-compatible Moen HTTP requests."""
 
+import json
+
+import aiohttp
 import pytest
 
-from custom_components.u_by_moen.api import MoenApi
+from custom_components.u_by_moen.api import (
+    MoenApi,
+    MoenApiError,
+    MoenApiHttpError,
+    MoenAuthError,
+)
 
 
 class FakeResponse:
     """Async response context manager."""
 
-    def __init__(self, status, payload=None) -> None:
+    def __init__(self, status, payload=None, headers=None) -> None:
         self.status = status
         self.payload = payload
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -24,6 +33,13 @@ class FakeResponse:
 
     async def json(self):
         return self.payload
+
+    async def text(self, **_kwargs):
+        if self.payload is None:
+            return ""
+        if isinstance(self.payload, str):
+            return self.payload
+        return json.dumps(self.payload)
 
 
 class FakeSession:
@@ -41,6 +57,13 @@ class FakeSession:
     def get(self, url, **kwargs):
         self.calls.append(("GET", url, kwargs))
         return self.auth.pop(0)
+
+
+class FailingSession:
+    """Raise a transport error without exposing its message downstream."""
+
+    def request(self, *_args, **_kwargs):
+        raise aiohttp.ClientConnectionError("private transport details")
 
 
 @pytest.mark.asyncio
@@ -143,3 +166,113 @@ async def test_preset_update_and_delete_match_android_endpoints() -> None:
     delete = session.calls[1]
     assert delete[0] == "DELETE"
     assert delete[1].endswith("/v2/showers/SERIAL/presets/3")
+
+
+@pytest.mark.asyncio
+async def test_http_error_retains_sanitized_response_context() -> None:
+    response = {
+        "error": "Preset payload rejected for user@example.com with Bearer abc123",
+        "token": "user-token",
+        "nested": {
+            "password": "password-value",
+            "authorization": "auth-value",
+            "client_secret": "secret-value",
+            "credentials": ["credential-value"],
+        },
+    }
+    session = FakeSession(
+        [
+            FakeResponse(
+                422,
+                response,
+                headers={"X-Request-ID": "request-123"},
+            )
+        ]
+    )
+    api = MoenApi("user@example.com", "secret", session)
+    api._token = "user-token"
+
+    with pytest.raises(MoenApiHttpError) as raised:
+        await api.update_presets(
+            "SERIAL",
+            {"api_server": "server", "name": "Main"},
+            [{"position": 1, "title": "Private title"}],
+        )
+
+    error = raised.value
+    rendered = str(error)
+    assert error.method == "PATCH"
+    assert error.path == "/v4/showers/SERIAL"
+    assert error.status == 422
+    assert error.request_id == "request-123"
+    assert "Preset payload rejected" in rendered
+    assert "<redacted-email>" in rendered
+    assert "Bearer <redacted>" in rendered
+    assert rendered.count("<redacted>") >= 5
+    for private_value in (
+        "user@example.com",
+        "abc123",
+        "user-token",
+        "password-value",
+        "auth-value",
+        "secret-value",
+        "credential-value",
+        "Private title",
+    ):
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
+async def test_non_json_error_is_normalized_redacted_and_truncated() -> None:
+    body = "password=hunter2\nAuthorization: Bearer secret-value " + "x" * 3000
+    session = FakeSession([FakeResponse(500, body)])
+    api = MoenApi("user@example.com", "secret", session)
+    api._token = "user-token"
+
+    with pytest.raises(MoenApiHttpError) as raised:
+        await api.delete_preset("SERIAL", 3)
+
+    error = raised.value
+    assert error.method == "DELETE"
+    assert error.status == 500
+    assert "\n" not in error.response_body
+    assert "<redacted>" in error.response_body
+    assert error.response_body.endswith("...<truncated>")
+    assert "hunter2" not in str(error)
+    assert "secret-value" not in str(error)
+
+
+@pytest.mark.asyncio
+async def test_transport_error_identifies_request_without_private_message() -> None:
+    api = MoenApi("user@example.com", "secret", FailingSession())
+    api._token = "user-token"
+
+    with pytest.raises(MoenApiError) as raised:
+        await api.delete_preset("SERIAL", 3)
+
+    rendered = str(raised.value)
+    assert "DELETE /v2/showers/SERIAL/presets/3" in rendered
+    assert "ClientConnectionError" in rendered
+    assert "private transport details" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_authorization_error_retains_only_sanitized_context() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                403,
+                {"error": "denied", "authorization": "private-auth"},
+            )
+        ]
+    )
+    api = MoenApi("user@example.com", "secret", session)
+    api._token = "user-token"
+
+    with pytest.raises(MoenAuthError) as raised:
+        await api.delete_preset("SERIAL", 3)
+
+    rendered = str(raised.value)
+    assert "DELETE /v2/showers/SERIAL/presets/3 returned HTTP 403" in rendered
+    assert '"authorization":"<redacted>"' in rendered
+    assert "private-auth" not in rendered

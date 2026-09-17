@@ -240,6 +240,10 @@ entities:
 ### Preset management fails
 
 - Remember that the preset flow has not yet been tested on live hardware.
+- Check the Home Assistant log for `Preset create failed`, `Preset edit failed`,
+  `Preset move failed`, or `Preset delete failed`. The warning includes the
+  request method, endpoint, HTTP status, optional Moen request ID, and a
+  truncated response with credential-like fields automatically redacted.
 - Reopen **Configure** before retrying if Home Assistant reports that the preset
   list changed while a form was open.
 - Verify the resulting preset list in the Moen app and on the controller.
@@ -259,7 +263,9 @@ logger:
 ```
 
 When sharing logs, redact email addresses, passwords, account tokens, shower
-tokens, and Pusher authorization values.
+tokens, and Pusher authorization values. The integration redacts known secret
+fields from preset error responses, but review logs for personal information
+before posting them publicly.
 
 ## API Information
 

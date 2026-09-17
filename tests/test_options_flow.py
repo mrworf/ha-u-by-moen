@@ -1,9 +1,11 @@
 """Tests for native preset-management options flow behavior."""
 
+import logging
 from types import SimpleNamespace
 
 import pytest
 
+from custom_components.u_by_moen.api import MoenApiError, MoenApiHttpError
 from custom_components.u_by_moen.config_flow import MoenOptionsFlow
 from custom_components.u_by_moen.coordinator import PresetMutationResult
 from custom_components.u_by_moen.presets import PresetConflictError
@@ -41,12 +43,21 @@ class FakeCoordinator:
         self.devices = devices
         self.replacements = []
         self.conflict = False
+        self.api_error = None
 
     async def async_replace_presets(self, serial, baseline, presets):
+        if self.api_error is not None:
+            raise self.api_error
         if self.conflict:
             raise PresetConflictError("changed")
         self.replacements.append((serial, baseline, presets))
         self.devices[serial]["presets"] = presets
+        return PresetMutationResult(True)
+
+    async def async_delete_preset(self, serial, baseline, position):
+        if self.api_error is not None:
+            raise self.api_error
+        self.devices[serial]["presets"].pop(position - 1)
         return PresetMutationResult(True)
 
 
@@ -125,3 +136,74 @@ def test_temperature_labels_follow_home_assistant_units() -> None:
     flow, _ = make_flow({"SERIAL": device()}, unit="°C")
 
     assert flow._temperature_label(100) == "37.8 °C"
+
+
+async def submit_failed_operation(flow, operation):
+    """Submit one options-flow operation after its selection step."""
+    await flow.async_step_init()
+    if operation == "create":
+        await flow.async_step_create()
+        return await flow.async_step_create(form_values("Sensitive submitted title"))
+    if operation == "edit":
+        await flow.async_step_edit()
+        await flow.async_step_edit({"position": 1})
+        return await flow.async_step_edit_preset(
+            form_values("Sensitive submitted title")
+        )
+    if operation == "move":
+        await flow.async_step_move()
+        return await flow.async_step_move({"position": 1, "destination": 2})
+    await flow.async_step_delete()
+    await flow.async_step_delete({"position": 1})
+    return await flow.async_step_delete_confirm({})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "edit", "move", "delete"])
+async def test_api_failures_log_safe_operation_context(operation, caplog) -> None:
+    flow, coordinator = make_flow({"SERIAL": device()})
+    method = "DELETE" if operation == "delete" else "PATCH"
+    path = (
+        "/v2/showers/SERIAL/presets/1"
+        if operation == "delete"
+        else "/v4/showers/SERIAL"
+    )
+    coordinator.api_error = MoenApiHttpError(
+        method,
+        path,
+        422,
+        '{"error":"server explanation","user_token":"private-token"}',
+        "request-123",
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="custom_components.u_by_moen.config_flow"
+    ):
+        result = await submit_failed_operation(flow, operation)
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert f"Preset {operation} failed for device SERIAL" in caplog.text
+    assert f"{method} {path} returned HTTP 422" in caplog.text
+    assert "server explanation" in caplog.text
+    assert "request_id=request-123" in caplog.text
+    assert "<redacted>" in caplog.text
+    assert "private-token" not in caplog.text
+    assert "Sensitive submitted title" not in caplog.text
+
+
+def test_failure_logging_does_not_render_private_exception_cause(caplog) -> None:
+    flow, _ = make_flow({"SERIAL": device()})
+    flow._serial_number = "SERIAL"
+    try:
+        raise RuntimeError("private low-level details")
+    except RuntimeError as cause:
+        error = MoenApiError("safe transport failure")
+        error.__cause__ = cause
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.u_by_moen.config_flow"
+    ):
+        flow._log_preset_api_error("create", error)
+
+    assert "safe transport failure" in caplog.text
+    assert "private low-level details" not in caplog.text
