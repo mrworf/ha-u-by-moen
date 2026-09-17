@@ -18,20 +18,9 @@ from .const import (
     MODE_PAUSED_BY_PRESET,
 )
 from .coordinator import MoenDataUpdateCoordinator
+from .outlets import outlet_mdi_icon, outlet_name
 
 _LOGGER = logging.getLogger(__name__)
-
-# Outlet icon mappings based on icon_index from API
-OUTLET_ICONS = {
-    0: "mdi:shower-head",  # Shower head
-    1: "mdi:shower",  # Rain shower
-    2: "mdi:water",  # Hand shower
-    3: "mdi:spray",  # Body spray
-    4: "mdi:water-pump",  # Pump/valve
-    5: "mdi:waves",  # Water feature
-    6: "mdi:bathtub",  # Tub spout
-}
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -144,9 +133,7 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
         # Get outlet name from icon index
         outlet = self._get_outlet_data()
         if outlet:
-            icon_index = outlet.get("icon_index", 0)
-            outlet_type = self._get_outlet_type(icon_index)
-            return f"{device_name} {outlet_type}"
+            return f"{device_name} {outlet_name(outlet)}"
 
         return f"{device_name} Outlet {self._outlet_position}"
 
@@ -155,8 +142,7 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
         """Return the icon for this outlet."""
         outlet = self._get_outlet_data()
         if outlet:
-            icon_index = outlet.get("icon_index", 0)
-            return OUTLET_ICONS.get(icon_index, ICON_OUTLET)
+            return outlet_mdi_icon(outlet, ICON_OUTLET)
         return ICON_OUTLET
 
     @property
@@ -223,16 +209,3 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
             if outlet.get("position") == self._outlet_position:
                 return outlet
         return None
-
-    def _get_outlet_type(self, icon_index: int) -> str:
-        """Get a friendly name for the outlet type."""
-        outlet_names = {
-            0: "Shower Head",
-            1: "Rain Shower",
-            2: "Hand Shower",
-            3: "Body Spray",
-            4: "Valve",
-            5: "Water Feature",
-            6: "Tub Spout",
-        }
-        return outlet_names.get(icon_index, f"Outlet {self._outlet_position}")

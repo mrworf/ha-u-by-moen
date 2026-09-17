@@ -3,6 +3,7 @@
 import logging
 from types import SimpleNamespace
 
+import homeassistant.helpers.config_validation as cv
 import pytest
 
 from custom_components.u_by_moen.api import MoenApiError, MoenApiHttpError
@@ -98,6 +99,32 @@ def test_new_preset_defaults_match_android_timer_default() -> None:
     assert defaults["timer_enabled"] is False
     assert defaults["timer_minutes"] == 0
     assert defaults["timer_seconds"] == 0
+
+
+def test_preset_form_labels_outlets_from_android_icons(monkeypatch) -> None:
+    details = device()
+    details["outlets"] = [
+        {"position": 1, "active": True, "icon_index": 2},
+        {"position": 2, "active": False, "icon_index": 6},
+        {"position": 3, "active": False, "icon_index": 7},
+    ]
+    flow, _ = make_flow({"SERIAL": details})
+    flow._serial_number = "SERIAL"
+    captured = {}
+
+    def capture_outlets(options):
+        captured.update(options)
+        return lambda values: values
+
+    monkeypatch.setattr(cv, "multi_select", capture_outlets)
+
+    flow._show_preset_form("create", flow._new_preset_defaults())
+
+    assert captured == {
+        "1": "Angled Shower (Outlet 1)",
+        "2": "Tub Spout (Outlet 2)",
+        "3": "Outlet 3",
+    }
 
 
 @pytest.mark.asyncio

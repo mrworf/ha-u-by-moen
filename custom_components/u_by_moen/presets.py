@@ -6,6 +6,8 @@ import copy
 import json
 from typing import Any, Literal, TypeAlias
 
+from .outlets import outlet_icon_index, outlet_name
+
 MIN_PRESETS = 2
 MAX_PRESETS = 10
 MIN_TEMPERATURE_F = 60
@@ -21,17 +23,6 @@ PRESET_BOOLEAN_FIELDS = (
     "timer_ends_shower",
     "timer_sounds_alert",
 )
-
-OUTLET_NAMES = {
-    0: "Shower Head",
-    1: "Rain Shower",
-    2: "Hand Shower",
-    3: "Body Spray",
-    4: "Valve",
-    5: "Water Feature",
-    6: "Tub Spout",
-}
-
 
 class PresetError(Exception):
     """Base preset-management error."""
@@ -108,7 +99,7 @@ def preset_detail_attributes(
         if not isinstance(outlet, dict):
             continue
         item = copy.deepcopy(outlet)
-        item.setdefault("name", OUTLET_NAMES.get(item.get("icon_index"), "Outlet"))
+        item["name"] = outlet_name(item)
         outlets.append(item)
 
     timer_length = preset.get("timer_length")
@@ -158,11 +149,7 @@ def clamp_preset_temperatures(
 
 def android_outlet_payload(outlet: dict[str, Any]) -> dict[str, Any]:
     """Serialize only the fields emitted by Android's Outlet model."""
-    icon = outlet.get("icon")
-    if not isinstance(icon, int) or isinstance(icon, bool) or icon == 0:
-        icon = outlet.get("icon_index", 0)
-    if not isinstance(icon, int) or isinstance(icon, bool):
-        icon = 0
+    icon = outlet_icon_index(outlet)
     position = outlet.get("position", 0)
     if not isinstance(position, int) or isinstance(position, bool):
         position = 0

@@ -14,6 +14,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import MoenApi, MoenApiError, MoenAuthError
 from .const import DOMAIN
 from .coordinator import MoenDataUpdateCoordinator
+from .outlets import outlet_label
 from .presets import (
     MAX_PRESETS,
     PresetConflictError,
@@ -451,7 +452,7 @@ class MoenOptionsFlow(config_entries.OptionsFlow):
             for value in range(60, int(self._device.get("max_temp", 115)) + 1)
         }
         outlets = {
-            str(outlet["position"]): f"Outlet {outlet['position']}"
+            str(outlet["position"]): outlet_label(outlet)
             for outlet in self._device.get("outlets", [])
         }
         schema = vol.Schema(
