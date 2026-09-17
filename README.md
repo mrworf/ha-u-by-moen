@@ -8,7 +8,7 @@ A custom Home Assistant integration for U by Moen smart shower systems (Alexa/An
 - **Preset Activation**: Buttons to activate your configured shower presets (e.g., "Jason", "Lauren", "Fill The Tub")
 - **Preset Management**: Create, edit, delete, and reorder each shower's presets from the integration's Configure flow
 - **Outlet Control**: Individual switches for each water outlet (shower head, hand shower, tub spout, body spray)
-- **Status Monitoring**: Sensors for current temperature, target temperature, active preset, timer, and more
+- **Status Monitoring**: Sensors for current temperature, target temperature, active preset, timer, preset inventory, and complete preset settings
 - **Real-time Updates**: Uses the same authenticated Pusher WebSocket path as the Android app, including heartbeat, reconnect, resubscribe, and full-state recovery
 
 ## Installation
@@ -75,6 +75,10 @@ For each U by Moen shower, the integration creates:
 - **Master Bathroom Lauren** - Activate Lauren preset
 - **Master Bathroom Fill The Tub** - Activate Fill The Tub preset
 
+Preset buttons are added and removed automatically when presets are created or
+deleted. Their identity follows the preset position, matching the physical
+controller and Android app ordering.
+
 ### Sensors
 - **Master Bathroom Mode** - Current mode (off/on/pause)
 - **Master Bathroom Current Temperature** - Current water temperature
@@ -82,6 +86,15 @@ For each U by Moen shower, the integration creates:
 - **Master Bathroom Active Preset** - Currently active preset name
 - **Master Bathroom Time Remaining** - Timer countdown (if active)
 - **Master Bathroom Firmware** - Firmware version
+- **Master Bathroom Preset Count** - Number of presets, with an ordered
+  `presets` attribute containing each position and title
+- **Master Bathroom Preset 1 Details** (one per position) - Preset title as its
+  state, with position, greeting, target temperature and unit, complete outlet
+  metadata, ready behavior, and timer settings as attributes
+
+Preset detail sensors use Home Assistant's configured temperature unit for
+display. They are added, updated, and removed with their corresponding preset;
+their entity identity remains tied to the preset position.
 
 ## Usage Examples
 

@@ -6,7 +6,9 @@ from custom_components.u_by_moen.presets import (
     PresetValidationError,
     create_preset,
     move_preset,
+    preset_detail_attributes,
     preset_from_form,
+    preset_inventory,
     preset_slots,
     replace_preset,
     validate_presets,
@@ -118,3 +120,68 @@ def test_create_rejects_android_ten_preset_limit() -> None:
 
     with pytest.raises(PresetValidationError, match="preset_limit"):
         create_preset(values, preset(-1, "Eleven"))
+
+
+def test_inventory_is_ordered_and_compact() -> None:
+    values = [
+        preset(2, "Two"),
+        {"position": "invalid", "title": "Ignored"},
+        preset(1, "One"),
+    ]
+
+    assert preset_inventory(values) == [
+        {"position": 1, "title": "One"},
+        {"position": 2, "title": "Two"},
+    ]
+
+
+def test_detail_attributes_expose_all_settings_in_home_assistant_units() -> None:
+    values = preset(1, "Morning")
+
+    details = preset_detail_attributes(values, "°C")
+
+    assert details == {
+        "position": 1,
+        "greeting": "Hello",
+        "target_temperature": 37.8,
+        "temperature_unit": "°C",
+        "outlets": [
+            {
+                "position": 1,
+                "active": True,
+                "icon_index": 2,
+                "name": "Hand Shower",
+            },
+            {
+                "position": 2,
+                "active": False,
+                "icon_index": 3,
+                "name": "Body Spray",
+            },
+        ],
+        "ready_pauses_water": False,
+        "ready_pushes_notification": True,
+        "ready_sounds_alert": True,
+        "timer_enabled": True,
+        "timer_length": 615,
+        "timer_ends_shower": True,
+        "timer_sounds_alert": True,
+    }
+
+
+def test_detail_attributes_tolerate_missing_optional_data() -> None:
+    details = preset_detail_attributes(
+        {
+            "position": 4,
+            "target_temperature": 101,
+            "outlets": "invalid",
+            "timer_length": True,
+        },
+        "°F",
+    )
+
+    assert details["target_temperature"] == 101
+    assert details["temperature_unit"] == "°F"
+    assert details["outlets"] == []
+    assert details["timer_length"] == 0
+    assert details["ready_sounds_alert"] is False

@@ -20,6 +20,16 @@ PRESET_BOOLEAN_FIELDS = (
     "timer_sounds_alert",
 )
 
+OUTLET_NAMES = {
+    0: "Shower Head",
+    1: "Rain Shower",
+    2: "Hand Shower",
+    3: "Body Spray",
+    4: "Valve",
+    5: "Water Feature",
+    6: "Tub Spout",
+}
+
 
 class PresetError(Exception):
     """Base preset-management error."""
@@ -58,6 +68,67 @@ def preset_slots(
         if isinstance(preset, dict)
         and isinstance(preset.get("position"), int)
         and preset["position"] > 0
+    }
+
+
+def preset_inventory(presets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the compact ordered preset inventory exposed by the count sensor."""
+    valid_presets = [
+        item
+        for item in presets
+        if isinstance(item, dict)
+        and isinstance(item.get("position"), int)
+        and not isinstance(item.get("position"), bool)
+    ]
+    return [
+        {"position": preset["position"], "title": preset.get("title", "Preset")}
+        for preset in sorted(valid_presets, key=lambda item: item["position"])
+    ]
+
+
+def preset_detail_attributes(
+    preset: dict[str, Any], temperature_unit: str
+) -> dict[str, Any]:
+    """Return stable, recorder-safe detail attributes for one preset."""
+    temperature = preset.get("target_temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        displayed_temperature: int | float = temperature
+        if temperature_unit in ("°C", "C"):
+            displayed_temperature = round((temperature - 32) * 5 / 9, 1)
+    else:
+        displayed_temperature = None
+
+    outlets = []
+    raw_outlets = preset.get("outlets", [])
+    if not isinstance(raw_outlets, list):
+        raw_outlets = []
+    for outlet in raw_outlets:
+        if not isinstance(outlet, dict):
+            continue
+        item = copy.deepcopy(outlet)
+        item.setdefault("name", OUTLET_NAMES.get(item.get("icon_index"), "Outlet"))
+        outlets.append(item)
+
+    timer_length = preset.get("timer_length")
+    return {
+        "position": preset.get("position"),
+        "greeting": preset.get("greeting"),
+        "target_temperature": displayed_temperature,
+        "temperature_unit": temperature_unit,
+        "outlets": outlets,
+        "ready_pauses_water": bool(preset.get("ready_pauses_water", False)),
+        "ready_pushes_notification": bool(
+            preset.get("ready_pushes_notification", False)
+        ),
+        "ready_sounds_alert": bool(preset.get("ready_sounds_alert", False)),
+        "timer_enabled": bool(preset.get("timer_enabled", False)),
+        "timer_length": (
+            timer_length
+            if isinstance(timer_length, int) and not isinstance(timer_length, bool)
+            else 0
+        ),
+        "timer_ends_shower": bool(preset.get("timer_ends_shower", False)),
+        "timer_sounds_alert": bool(preset.get("timer_sounds_alert", False)),
     }
 
 
