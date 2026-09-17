@@ -1,16 +1,15 @@
 """Config flow for U by Moen integration."""
+
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-import aiohttp
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import MoenApi, MoenAuthError, MoenApiError
+from .api import MoenApi, MoenApiError, MoenAuthError
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,10 +28,10 @@ class MoenConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(
-        self, user_input: Optional[Dict[str, Any]] = None
+        self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
-        errors: Dict[str, str] = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             # Validate the credentials
@@ -48,7 +47,7 @@ class MoenConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await api.authenticate()
 
                 # Get devices to verify connection works
-                devices = await api.get_devices()
+                await api.get_devices()
 
                 # Create a unique ID based on the email
                 await self.async_set_unique_id(user_input[CONF_EMAIL].lower())

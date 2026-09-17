@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -10,11 +13,21 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import MoenApi, MoenApiError
+from .commands import (
+    MoenCommandError,
+    outlet_payload,
+    power_payload,
+    preset_payload,
+    temperature_payload,
+)
 from .const import DOMAIN, UPDATE_INTERVAL
 from .pusher import MoenPusherError, MoenPusherTransport
 from .state import merge_device_update, merge_rest_snapshot, parse_state_event
 
 _LOGGER = logging.getLogger(__name__)
+
+COMMAND_CONFIRM_TIMEOUT = 5.0
+REPORT_CONFIRM_TIMEOUT = 3.0
 
 
 class MoenDataUpdateCoordinator(DataUpdateCoordinator):
@@ -33,6 +46,8 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
         self.pusher = pusher
         self.devices: dict[str, dict[str, Any]] = {}
         self._push_fresh: set[str] = set()
+        self._push_waiters: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
+        self._command_locks: dict[str, asyncio.Lock] = {}
 
     async def async_start_pusher(self) -> None:
         """Register known devices and start passive live synchronization."""
@@ -108,6 +123,182 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
             )
             self._push_fresh.add(serial_number)
             self.async_set_updated_data(self.devices)
+            for waiter in tuple(self._push_waiters.get(serial_number, set())):
+                waiter.put_nowait(update)
+
+    async def async_set_power(self, serial_number: str, turn_on: bool) -> None:
+        """Turn the shower on/resume it, or turn it off."""
+        expected = (
+            (lambda update: update.get("mode") not in (None, "off"))
+            if turn_on
+            else (lambda update: update.get("mode") == "off")
+        )
+        optimistic = {"mode": "adjusting" if turn_on else "off"}
+        await self._async_execute_control(
+            serial_number,
+            power_payload(turn_on),
+            optimistic,
+            expected,
+        )
+
+    async def async_activate_preset(self, serial_number: str, position: int) -> None:
+        """Activate one configured preset using the APK's position split."""
+        device = self._device(serial_number)
+        payload, preset = preset_payload(device.get("presets", []), position)
+        optimistic = {
+            "active_preset": position,
+            **{
+                key: preset[key]
+                for key in (
+                    "target_temperature",
+                    "outlets",
+                    "timer_enabled",
+                    "timer_length",
+                )
+                if key in preset
+            },
+        }
+        await self._async_execute_control(
+            serial_number,
+            payload,
+            optimistic,
+            lambda update: update.get("active_preset") == position,
+        )
+
+    async def async_set_temperature(
+        self, serial_number: str, temperature: float
+    ) -> None:
+        """Set the target temperature in whole degrees Fahrenheit."""
+        device = self._device(serial_number)
+        payload, target = temperature_payload(
+            temperature,
+            60,
+            device.get("max_temp", 115),
+        )
+        await self._async_execute_control(
+            serial_number,
+            payload,
+            {"target_temperature": target},
+            lambda update: update.get("target_temperature") == target,
+        )
+
+    async def async_set_outlet(
+        self, serial_number: str, position: int, active: bool
+    ) -> None:
+        """Set one outlet while transmitting the complete ordered outlet state."""
+        device = self._device(serial_number)
+        payload, outlets = outlet_payload(device.get("outlets", []), position, active)
+
+        def expected(update: dict[str, Any]) -> bool:
+            return any(
+                outlet.get("position") == position and outlet.get("active") is active
+                for outlet in update.get("outlets", [])
+                if isinstance(outlet, dict)
+            )
+
+        await self._async_execute_control(
+            serial_number,
+            payload,
+            {"outlets": outlets},
+            expected,
+        )
+
+    def _device(self, serial_number: str) -> dict[str, Any]:
+        try:
+            return self.devices[serial_number]
+        except KeyError as err:
+            raise MoenCommandError(f"Unknown shower {serial_number}") from err
+
+    async def _async_execute_control(
+        self,
+        serial_number: str,
+        payload: dict[str, Any],
+        optimistic: dict[str, Any],
+        expected: Callable[[dict[str, Any]], bool],
+    ) -> None:
+        """Send, optimistically apply, and then confirm one control command."""
+        lock = self._command_locks.setdefault(serial_number, asyncio.Lock())
+        async with lock:
+            await self._async_execute_control_locked(
+                serial_number,
+                payload,
+                optimistic,
+                expected,
+            )
+
+    async def _async_execute_control_locked(
+        self,
+        serial_number: str,
+        payload: dict[str, Any],
+        optimistic: dict[str, Any],
+        expected: Callable[[dict[str, Any]], bool],
+    ) -> None:
+        """Execute one serialized device command."""
+        previous = dict(self._device(serial_number))
+        waiter: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._push_waiters.setdefault(serial_number, set()).add(waiter)
+        optimistic_applied = False
+        try:
+            await self.pusher.send_client_event(
+                serial_number,
+                "client-state-desired",
+                payload,
+            )
+            self.devices[serial_number] = merge_device_update(previous, optimistic)
+            optimistic_applied = True
+            self.async_set_updated_data(self.devices)
+
+            if await self._async_wait_for_confirmation(
+                waiter, expected, COMMAND_CONFIRM_TIMEOUT
+            ):
+                return
+            try:
+                await self.pusher.request_report(serial_number)
+            except MoenPusherError:
+                pass
+            else:
+                if await self._async_wait_for_confirmation(
+                    waiter, expected, REPORT_CONFIRM_TIMEOUT
+                ):
+                    return
+
+            snapshot = await self.api.get_device_details(serial_number)
+            if not expected(snapshot):
+                raise MoenCommandError("The shower did not confirm the command")
+            self.devices[serial_number] = snapshot
+            self.async_set_updated_data(self.devices)
+        except MoenCommandError:
+            if optimistic_applied:
+                self.devices[serial_number] = previous
+                self.async_set_updated_data(self.devices)
+            raise
+        except (MoenApiError, MoenPusherError) as err:
+            if optimistic_applied:
+                self.devices[serial_number] = previous
+                self.async_set_updated_data(self.devices)
+            raise MoenCommandError("Could not control the shower") from err
+        finally:
+            waiters = self._push_waiters.get(serial_number)
+            if waiters is not None:
+                waiters.discard(waiter)
+                if not waiters:
+                    self._push_waiters.pop(serial_number, None)
+
+    @staticmethod
+    async def _async_wait_for_confirmation(
+        waiter: asyncio.Queue[dict[str, Any]],
+        expected: Callable[[dict[str, Any]], bool],
+        timeout: float,
+    ) -> bool:
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                update = await asyncio.wait_for(waiter.get(), remaining)
+            except asyncio.TimeoutError:
+                return False
+            if expected(update):
+                return True
+        return False
 
     def update_device_from_pusher(
         self, serial_number: str, update_data: dict[str, Any]

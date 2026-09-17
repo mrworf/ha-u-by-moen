@@ -1,6 +1,7 @@
 """Climate platform for U by Moen."""
+
 import logging
-from typing import Any, List, Optional
+from typing import Any, ClassVar
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -14,15 +15,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
-    ATTR_SERIAL_NUMBER,
-    ATTR_MODE,
     ATTR_CURRENT_TEMP,
-    ATTR_TARGET_TEMP,
     ATTR_MAX_TEMP,
+    ATTR_MODE,
+    ATTR_TARGET_TEMP,
+    DOMAIN,
+    ICON_SHOWER,
     MODE_OFF,
     MODE_PAUSED_BY_PRESET,
-    ICON_SHOWER,
 )
 from .coordinator import MoenDataUpdateCoordinator
 
@@ -38,11 +38,9 @@ async def async_setup_entry(
     coordinator: MoenDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    api = hass.data[DOMAIN][entry.entry_id]["api"]
-
     entities = []
-    for serial_number, device_data in coordinator.data.items():
-        entities.append(MoenClimate(coordinator, api, serial_number))
+    for serial_number in coordinator.data:
+        entities.append(MoenClimate(coordinator, serial_number))
 
     async_add_entities(entities)
 
@@ -52,24 +50,22 @@ class MoenClimate(CoordinatorEntity, ClimateEntity):
 
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
     )
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+    _attr_hvac_modes: ClassVar[list[HVACMode]] = [HVACMode.OFF, HVACMode.HEAT]
     _attr_icon = ICON_SHOWER
 
     def __init__(
         self,
         coordinator: MoenDataUpdateCoordinator,
-        api,
         serial_number: str,
     ) -> None:
         """Initialize the climate entity."""
         super().__init__(coordinator)
-        self._api = api
         self._serial_number = serial_number
         self._attr_unique_id = f"{serial_number}_climate"
-        self._optimistic_hvac_mode = None  # None means use coordinator data
-        self._optimistic_target_temp = None  # None means use coordinator data
 
     @property
     def device_info(self):
@@ -92,10 +88,6 @@ class MoenClimate(CoordinatorEntity, ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return current HVAC mode."""
-        # If we have an optimistic mode (command just sent), use that
-        if self._optimistic_hvac_mode is not None:
-            return self._optimistic_hvac_mode
-        # Otherwise use coordinator data
         device_data = self.coordinator.data[self._serial_number]
         mode = device_data.get(ATTR_MODE, MODE_OFF)
         # Treat paused-by-preset as "off" so Home Assistant exposes resume controls
@@ -105,18 +97,14 @@ class MoenClimate(CoordinatorEntity, ClimateEntity):
         return HVACMode.HEAT if mode != MODE_OFF else HVACMode.OFF
 
     @property
-    def current_temperature(self) -> Optional[float]:
+    def current_temperature(self) -> float | None:
         """Return the current temperature."""
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get(ATTR_CURRENT_TEMP)
 
     @property
-    def target_temperature(self) -> Optional[float]:
+    def target_temperature(self) -> float | None:
         """Return the target temperature."""
-        # If we have an optimistic target temp (command just sent), use that
-        if self._optimistic_target_temp is not None:
-            return self._optimistic_target_temp
-        # Otherwise use coordinator data
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get(ATTR_TARGET_TEMP)
 
@@ -138,30 +126,17 @@ class MoenClimate(CoordinatorEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new HVAC mode."""
-        self._optimistic_hvac_mode = hvac_mode  # Optimistically assume it worked
-        self.async_write_ha_state()  # Update UI immediately
-        device_data = self.coordinator.data[self._serial_number]
-        mode = device_data.get(ATTR_MODE, MODE_OFF)
         if hvac_mode == HVACMode.HEAT:
-            if mode == MODE_PAUSED_BY_PRESET:
-                await self._api.resume_shower(
-                    self._serial_number, device_data.get("active_preset")
-                )
-            else:
-                await self._api.set_shower_mode(self._serial_number, "on")
+            await self.coordinator.async_set_power(self._serial_number, True)
         elif hvac_mode == HVACMode.OFF:
-            await self._api.set_shower_mode(self._serial_number, MODE_OFF)
-        # State will be confirmed via Pusher client-state-reported event
+            await self.coordinator.async_set_power(self._serial_number, False)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
 
-        self._optimistic_target_temp = temperature  # Optimistically assume it worked
-        self.async_write_ha_state()  # Update UI immediately
-        await self._api.set_target_temperature(self._serial_number, temperature)
-        # State will be confirmed via Pusher client-state-reported event
+        await self.coordinator.async_set_temperature(self._serial_number, temperature)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -173,11 +148,3 @@ class MoenClimate(CoordinatorEntity, ClimateEntity):
             "active_preset": device_data.get("active_preset"),
             "firmware_version": device_data.get("current_firmware_version"),
         }
-
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        # When coordinator updates (Pusher event), clear optimistic states
-        # so we use the actual confirmed state from the device
-        self._optimistic_hvac_mode = None
-        self._optimistic_target_temp = None
-        super()._handle_coordinator_update()

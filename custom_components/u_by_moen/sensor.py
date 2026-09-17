@@ -1,6 +1,6 @@
 """Sensor platform for U by Moen."""
+
 import logging
-from typing import Optional
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -14,12 +14,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
-    ATTR_MODE,
-    ATTR_CURRENT_TEMP,
-    ATTR_TARGET_TEMP,
     ATTR_ACTIVE_PRESET,
+    ATTR_CURRENT_TEMP,
     ATTR_FIRMWARE,
+    ATTR_MODE,
+    ATTR_TARGET_TEMP,
+    DOMAIN,
     ICON_TEMPERATURE,
 )
 from .coordinator import MoenDataUpdateCoordinator
@@ -38,7 +38,7 @@ async def async_setup_entry(
     ]
 
     entities = []
-    for serial_number, device_data in coordinator.data.items():
+    for serial_number in coordinator.data:
         entities.extend(
             [
                 MoenModeSensor(coordinator, serial_number),
@@ -104,7 +104,7 @@ class MoenModeSensor(MoenSensorBase):
         return f"{self.device_name} Mode"
 
     @property
-    def native_value(self) -> Optional[str]:
+    def native_value(self) -> str | None:
         """Return the state of the sensor."""
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get(ATTR_MODE)
@@ -130,7 +130,7 @@ class MoenCurrentTempSensor(MoenSensorBase):
         return f"{self.device_name} Current Temperature"
 
     @property
-    def native_value(self) -> Optional[float]:
+    def native_value(self) -> float | None:
         """Return the state of the sensor."""
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get(ATTR_CURRENT_TEMP)
@@ -156,7 +156,7 @@ class MoenTargetTempSensor(MoenSensorBase):
         return f"{self.device_name} Target Temperature"
 
     @property
-    def native_value(self) -> Optional[float]:
+    def native_value(self) -> float | None:
         """Return the state of the sensor."""
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get(ATTR_TARGET_TEMP)
@@ -179,7 +179,7 @@ class MoenActivePresetSensor(MoenSensorBase):
         return f"{self.device_name} Active Preset"
 
     @property
-    def native_value(self) -> Optional[str]:
+    def native_value(self) -> str | None:
         """Return the state of the sensor."""
         device_data = self.coordinator.data[self._serial_number]
         preset_position = device_data.get(ATTR_ACTIVE_PRESET, 0)
@@ -216,7 +216,7 @@ class MoenTimeRemainingSensor(MoenSensorBase):
         return f"{self.device_name} Time Remaining"
 
     @property
-    def native_value(self) -> Optional[int]:
+    def native_value(self) -> int | None:
         """Return the state of the sensor."""
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get("time_remaining", 0)
@@ -239,7 +239,7 @@ class MoenFirmwareSensor(MoenSensorBase):
         return f"{self.device_name} Firmware"
 
     @property
-    def native_value(self) -> Optional[str]:
+    def native_value(self) -> str | None:
         """Return the state of the sensor."""
         device_data = self.coordinator.data[self._serial_number]
         return device_data.get(ATTR_FIRMWARE)

@@ -100,6 +100,7 @@ class _PusherConnection:
     async def _supervise(self) -> None:
         attempt = 0
         while self._running:
+            established = False
             try:
                 await self._run_connection()
                 attempt = 0
@@ -108,13 +109,14 @@ class _PusherConnection:
             except Exception as err:  # noqa: BLE001 - supervisor must survive transport callbacks
                 _LOGGER.warning("Pusher connection lost: %s", err)
             finally:
+                established = self._socket_id is not None
                 self._mark_disconnected()
                 if self._ws is not None and not self._ws.closed:
                     await self._ws.close()
                 self._ws = None
 
             if self._running:
-                attempt += 1
+                attempt = 1 if established else attempt + 1
                 delay = min(30.0, float(attempt * attempt))
                 delay += random.uniform(0, min(1.0, delay / 4))
                 _LOGGER.debug(

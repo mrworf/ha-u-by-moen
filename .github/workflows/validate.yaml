@@ -10,6 +10,20 @@ on:
 permissions: {}
 
 jobs:
+  unit-tests:
+    runs-on: "ubuntu-latest"
+    name: Offline protocol tests
+    steps:
+      - uses: "actions/checkout@v4"
+      - uses: "actions/setup-python@v5"
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install test dependencies
+        run: python -m pip install aiohttp pytest pytest-asyncio
+      - name: Run tests
+        run: pytest -q
+
   validate-hacs:
     runs-on: "ubuntu-latest"
     name: Validate with HACS Action

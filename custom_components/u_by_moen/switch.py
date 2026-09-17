@@ -1,7 +1,7 @@
 """Switch platform for U by Moen."""
-import asyncio
+
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -10,12 +10,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
     ATTR_OUTLETS,
+    DOMAIN,
+    ICON_OUTLET,
+    ICON_SHOWER,
     MODE_OFF,
     MODE_PAUSED_BY_PRESET,
-    ICON_SHOWER,
-    ICON_OUTLET,
 )
 from .coordinator import MoenDataUpdateCoordinator
 
@@ -42,21 +42,17 @@ async def async_setup_entry(
     coordinator: MoenDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    api = hass.data[DOMAIN][entry.entry_id]["api"]
-
     entities = []
     for serial_number, device_data in coordinator.data.items():
         # Add main shower on/off switch
-        entities.append(MoenShowerSwitch(coordinator, api, serial_number))
+        entities.append(MoenShowerSwitch(coordinator, serial_number))
 
         # Add outlet switches
         outlets = device_data.get(ATTR_OUTLETS, [])
         for outlet in outlets:
             position = outlet.get("position")
             if position:
-                entities.append(
-                    MoenOutletSwitch(coordinator, api, serial_number, position)
-                )
+                entities.append(MoenOutletSwitch(coordinator, serial_number, position))
 
     async_add_entities(entities)
 
@@ -69,15 +65,12 @@ class MoenShowerSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: MoenDataUpdateCoordinator,
-        api,
         serial_number: str,
     ) -> None:
         """Initialize the switch."""
         super().__init__(coordinator)
-        self._api = api
         self._serial_number = serial_number
         self._attr_unique_id = f"{serial_number}_power"
-        self._optimistic_state = None  # None means use coordinator data
 
     @property
     def device_info(self):
@@ -101,10 +94,6 @@ class MoenShowerSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return true if the shower is on."""
-        # If we have an optimistic state (command just sent), use that
-        if self._optimistic_state is not None:
-            return self._optimistic_state
-        # Otherwise use coordinator data
         device_data = self.coordinator.data[self._serial_number]
         mode = device_data.get("mode", MODE_OFF)
         # Treat paused-by-preset like off so UI exposes resume option
@@ -112,30 +101,11 @@ class MoenShowerSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the shower on."""
-        self._optimistic_state = True  # Optimistically assume it worked
-        self.async_write_ha_state()  # Update UI immediately
-        device_data = self.coordinator.data[self._serial_number]
-        mode = device_data.get("mode", MODE_OFF)
-        active_preset = device_data.get("active_preset")
-        if mode == MODE_PAUSED_BY_PRESET:
-            await self._api.resume_shower(self._serial_number, active_preset)
-        else:
-            await self._api.set_shower_mode(self._serial_number, "on")
-        # State will be confirmed via Pusher client-state-reported event
+        await self.coordinator.async_set_power(self._serial_number, True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the shower off."""
-        self._optimistic_state = False  # Optimistically assume it worked
-        self.async_write_ha_state()  # Update UI immediately
-        await self._api.set_shower_mode(self._serial_number, MODE_OFF)
-        # State will be confirmed via Pusher client-state-reported event
-
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        # When coordinator updates (Pusher event), clear optimistic state
-        # so we use the actual confirmed state from the device
-        self._optimistic_state = None
-        super()._handle_coordinator_update()
+        await self.coordinator.async_set_power(self._serial_number, False)
 
 
 class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
@@ -144,17 +114,14 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: MoenDataUpdateCoordinator,
-        api,
         serial_number: str,
         outlet_position: int,
     ) -> None:
         """Initialize the outlet switch."""
         super().__init__(coordinator)
-        self._api = api
         self._serial_number = serial_number
         self._outlet_position = outlet_position
         self._attr_unique_id = f"{serial_number}_outlet_{outlet_position}"
-        self._optimistic_state = None  # None means use coordinator data
 
     @property
     def device_info(self):
@@ -195,10 +162,6 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return true if the outlet is active."""
-        # If we have an optimistic state (command just sent), use that
-        if self._optimistic_state is not None:
-            return self._optimistic_state
-        # Otherwise use coordinator data
         outlet = self._get_outlet_data()
         if outlet:
             return outlet.get("active", False)
@@ -206,54 +169,28 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the outlet on."""
-        self._optimistic_state = True  # Optimistically assume it worked
-        self.async_write_ha_state()  # Update UI immediately
-
         device_data = self.coordinator.data[self._serial_number]
         current_mode = device_data.get("mode", MODE_OFF)
 
         # If shower is off, turn it on with this outlet
         if current_mode == MODE_OFF:
-            _LOGGER.debug("Shower is off, turning on with outlet %d", self._outlet_position)
-            await self._api.set_shower_mode(self._serial_number, "on")
-            # Wait a moment for the shower to start, then set the outlet
-            await asyncio.sleep(0.5)
+            _LOGGER.debug(
+                "Shower is off, turning on with outlet %d", self._outlet_position
+            )
+            await self.coordinator.async_set_power(self._serial_number, True)
         elif current_mode == MODE_PAUSED_BY_PRESET:
             _LOGGER.debug(
                 "Shower paused by preset, resuming before enabling outlet %d",
                 self._outlet_position,
             )
-            await self._api.resume_shower(
-                self._serial_number, device_data.get("active_preset")
-            )
-            await asyncio.sleep(0.5)
+            await self.coordinator.async_set_power(self._serial_number, True)
 
-        # Get current outlet states from coordinator (has real-time data from Pusher)
-        device_data = self.coordinator.data[self._serial_number]
-        outlets = device_data.get(ATTR_OUTLETS, [])
-
-        # Build new outlet states list with this outlet turned on, keeping others as-is
-        new_outlet_states = []
-        for outlet in outlets:
-            pos = outlet.get("position")
-            # Turn on this outlet, keep others in their current state
-            if pos == self._outlet_position:
-                new_outlet_states.append({"position": pos, "active": True})
-            else:
-                new_outlet_states.append({"position": pos, "active": outlet.get("active", False)})
-
-        # Get device channel for sending command
-        device_details = await self._api.get_device_details(self._serial_number)
-        channel_id = device_details.get("channel")
-        if channel_id:
-            await self._api.send_control_event(channel_id, "outlets_set", {"outlets": new_outlet_states})
-        # State will be confirmed via Pusher client-state-reported event
+        await self.coordinator.async_set_outlet(
+            self._serial_number, self._outlet_position, True
+        )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the outlet off."""
-        self._optimistic_state = False  # Optimistically assume it worked
-        self.async_write_ha_state()  # Update UI immediately
-
         device_data = self.coordinator.data[self._serial_number]
         outlets = device_data.get(ATTR_OUTLETS, [])
 
@@ -261,38 +198,24 @@ class MoenOutletSwitch(CoordinatorEntity, SwitchEntity):
         active_outlets = [o for o in outlets if o.get("active", False)]
 
         # If this is the only active outlet, turn off the entire shower
-        if len(active_outlets) == 1 and active_outlets[0].get("position") == self._outlet_position:
+        if (
+            len(active_outlets) == 1
+            and active_outlets[0].get("position") == self._outlet_position
+        ):
             _LOGGER.debug("This is the only active outlet, turning off entire shower")
-            await self._api.set_shower_mode(self._serial_number, MODE_OFF)
+            await self.coordinator.async_set_power(self._serial_number, False)
         else:
             # Otherwise, just turn off this outlet (keep others as-is)
-            _LOGGER.debug("Multiple outlets active, turning off only outlet %d", self._outlet_position)
+            _LOGGER.debug(
+                "Multiple outlets active, turning off only outlet %d",
+                self._outlet_position,
+            )
 
-            # Build new outlet states list with this outlet turned off, keeping others as-is
-            new_outlet_states = []
-            for outlet in outlets:
-                pos = outlet.get("position")
-                # Turn off this outlet, keep others in their current state
-                if pos == self._outlet_position:
-                    new_outlet_states.append({"position": pos, "active": False})
-                else:
-                    new_outlet_states.append({"position": pos, "active": outlet.get("active", False)})
+            await self.coordinator.async_set_outlet(
+                self._serial_number, self._outlet_position, False
+            )
 
-            # Get device channel for sending command
-            device_details = await self._api.get_device_details(self._serial_number)
-            channel_id = device_details.get("channel")
-            if channel_id:
-                await self._api.send_control_event(channel_id, "outlets_set", {"outlets": new_outlet_states})
-        # State will be confirmed via Pusher client-state-reported event
-
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        # When coordinator updates (Pusher event), clear optimistic state
-        # so we use the actual confirmed state from the device
-        self._optimistic_state = None
-        super()._handle_coordinator_update()
-
-    def _get_outlet_data(self) -> Optional[dict]:
+    def _get_outlet_data(self) -> dict | None:
         """Get the outlet data for this position."""
         device_data = self.coordinator.data[self._serial_number]
         outlets = device_data.get(ATTR_OUTLETS, [])

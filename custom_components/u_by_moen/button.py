@@ -1,4 +1,5 @@
 """Button platform for U by Moen."""
+
 import logging
 
 from homeassistant.components.button import ButtonEntity
@@ -7,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ATTR_PRESETS
+from .const import ATTR_PRESETS, DOMAIN
 from .coordinator import MoenDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,8 +23,6 @@ async def async_setup_entry(
     coordinator: MoenDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    api = hass.data[DOMAIN][entry.entry_id]["api"]
-
     entities = []
     for serial_number, device_data in coordinator.data.items():
         # Add preset buttons
@@ -31,9 +30,7 @@ async def async_setup_entry(
         for preset in presets:
             position = preset.get("position")
             if position:
-                entities.append(
-                    MoenPresetButton(coordinator, api, serial_number, position)
-                )
+                entities.append(MoenPresetButton(coordinator, serial_number, position))
 
     async_add_entities(entities)
 
@@ -46,13 +43,11 @@ class MoenPresetButton(CoordinatorEntity, ButtonEntity):
     def __init__(
         self,
         coordinator: MoenDataUpdateCoordinator,
-        api,
         serial_number: str,
         preset_position: int,
     ) -> None:
         """Initialize the button."""
         super().__init__(coordinator)
-        self._api = api
         self._serial_number = serial_number
         self._preset_position = preset_position
         self._attr_unique_id = f"{serial_number}_preset_{preset_position}"
@@ -89,8 +84,9 @@ class MoenPresetButton(CoordinatorEntity, ButtonEntity):
             self._preset_position,
             self._serial_number,
         )
-        await self._api.activate_preset(self._serial_number, self._preset_position)
-        # State will update via Pusher client-state-reported event
+        await self.coordinator.async_activate_preset(
+            self._serial_number, self._preset_position
+        )
 
     def _get_preset_data(self) -> dict:
         """Get the preset data for this position."""

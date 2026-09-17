@@ -8,7 +8,7 @@ A custom Home Assistant integration for U by Moen smart shower systems (Alexa/An
 - **Preset Activation**: Buttons to activate your configured shower presets (e.g., "Jason", "Lauren", "Fill The Tub")
 - **Outlet Control**: Individual switches for each water outlet (shower head, hand shower, tub spout, body spray)
 - **Status Monitoring**: Sensors for current temperature, target temperature, active preset, timer, and more
-- **Real-time Updates**: Uses Pusher WebSocket for instant status updates (coming soon)
+- **Real-time Updates**: Uses the same authenticated Pusher WebSocket path as the Android app, including heartbeat, reconnect, resubscribe, and full-state recovery
 
 ## Installation
 
@@ -147,9 +147,10 @@ entities:
 
 ## Known Limitations
 
-- **Pusher WebSocket Events**: The control commands (turning on/off, changing temperature, activating presets) use Pusher client events. The exact event names are currently based on common patterns and may need to be refined through testing. If controls don't work immediately, we'll need to capture the actual WebSocket messages from the mobile app.
-
-- **Real-time Updates**: Status updates currently rely on polling (every 30 seconds). Full Pusher WebSocket integration for instant updates is planned.
+- This is a cloud-push integration. It requires access to the Moen API and Pusher; the APK's local-LAN path is not implemented.
+- Preset buttons activate presets already configured for the shower. Creating, editing, or deleting presets is not supported.
+- REST polling remains as bootstrap and recovery. While Pusher is healthy, a REST response cannot overwrite newer live shower state.
+- Command payloads and recovery behavior are covered by offline APK-derived protocol tests. They have not been exercised against a live shower as part of this change.
 
 ## Troubleshooting
 
@@ -163,8 +164,8 @@ entities:
 
 ### Controls not working
 - Check Home Assistant logs for errors
-- The Pusher event names may need adjustment (see Known Limitations)
-- Open an issue with debug logs
+- Confirm the integration reports a healthy internet connection; commands require an authenticated private Pusher subscription
+- Open an issue with redacted debug logs (never include account, user-token, shower-token, or Pusher authorization values)
 
 ### Enable debug logging
 Add to your `configuration.yaml`:
@@ -180,7 +181,7 @@ logger:
 This integration uses the Moen IoT API:
 - **Base URL**: `https://www.moen-iot.com`
 - **Authentication**: Token-based (obtained via email/password)
-- **Real-time**: Pusher WebSocket (app_key: `dcc28ccb5296f18f8eae`, cluster: `us2`)
+- **Real-time**: Device-scoped Pusher credentials and private-channel authorization obtained from the Moen API
 
 ## Contributing
 
@@ -194,16 +195,6 @@ Come see our other apps and integrations at [WeaveHub](https://weavehub.app).
 2. Install dependencies: `pip install -r requirements.txt`
 3. Make your changes
 4. Test with your Home Assistant instance
-
-### Capturing WebSocket Events
-
-If you want to help improve the Pusher control commands:
-
-1. Use Charles Proxy or similar tool
-2. Enable SSL proxying for `*.pusher.com`
-3. Monitor traffic while using the Moen mobile app
-4. Capture the `client-*` events sent when controlling the shower
-5. Share findings in an issue
 
 ## License
 

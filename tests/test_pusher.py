@@ -135,3 +135,23 @@ async def test_malformed_message_is_ignored_and_disconnected_send_fails() -> Non
     connection._ws = None
     with pytest.raises(MoenPusherNotReady):
         await connection._send({"event": "client-test"})
+
+
+@pytest.mark.asyncio
+async def test_client_event_outer_data_is_a_json_string() -> None:
+    connection, _, websocket = make_connection()
+
+    async def callback(_event, _data):
+        pass
+
+    subscription = PusherSubscription("SERIAL", "private-channel", 2, callback)
+    subscription.ready.set()
+    connection.add_subscription(subscription)
+    payload = {"type": "control", "data": {"action": "shower_off"}}
+
+    await connection.send_client_event("SERIAL", "client-state-desired", payload)
+
+    message = websocket.messages[-1]
+    assert message["event"] == "client-state-desired"
+    assert isinstance(message["data"], str)
+    assert json.loads(message["data"]) == payload
