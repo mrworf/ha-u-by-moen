@@ -6,6 +6,7 @@ A custom Home Assistant integration for U by Moen smart shower systems (Alexa/An
 
 - **Climate Control**: Control your shower temperature and power through Home Assistant's climate entity
 - **Preset Activation**: Buttons to activate your configured shower presets (e.g., "Jason", "Lauren", "Fill The Tub")
+- **Preset Management**: Create, edit, delete, and reorder each shower's presets from the integration's Configure flow
 - **Outlet Control**: Individual switches for each water outlet (shower head, hand shower, tub spout, body spray)
 - **Status Monitoring**: Sensors for current temperature, target temperature, active preset, timer, and more
 - **Real-time Updates**: Uses the same authenticated Pusher WebSocket path as the Android app, including heartbeat, reconnect, resubscribe, and full-state recovery
@@ -38,6 +39,20 @@ A custom Home Assistant integration for U by Moen smart shower systems (Alexa/An
 5. Click Submit
 
 Your devices will be automatically discovered and added to Home Assistant.
+
+## Managing Presets
+
+Open **Settings** → **Devices & Services**, find **U by Moen**, and select
+**Configure**. If the account has multiple showers, choose a device first. You
+can then create, edit, delete, or move presets and perform several operations
+before selecting **Finish**.
+
+The editor exposes the same preset settings as Android 2.5.0: title, greeting,
+temperature, outlets, ready alerts and pause behavior, plus timer duration and
+end behavior. Home Assistant displays temperature choices in its configured
+unit while preserving the exact Fahrenheit value used by Moen. At least two and
+at most ten presets are supported. Positions 1 and 2 are synchronized to the
+physical controller; changing their order changes the controller buttons.
 
 ## Entities Created
 
@@ -148,7 +163,7 @@ entities:
 ## Known Limitations
 
 - This is a cloud-push integration. It requires access to the Moen API and Pusher; the APK's local-LAN path is not implemented.
-- Preset buttons activate presets already configured for the shower. Creating, editing, or deleting presets is not supported.
+- Preset cloud changes are retained if the physical-controller Pusher sync is temporarily unavailable; the integration reports the pending state and retries after reconnect.
 - REST polling remains as bootstrap and recovery. While Pusher is healthy, a REST response cannot overwrite newer live shower state.
 - Command payloads and recovery behavior are covered by offline APK-derived protocol tests. They have not been exercised against a live shower as part of this change.
 

@@ -2,6 +2,7 @@
 aiohttp>=3.9
 pytest>=8
 pytest-asyncio>=0.23
+voluptuous>=0.13
 
 # Development requirements
 homeassistant>=2024.1.0

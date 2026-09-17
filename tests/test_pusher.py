@@ -97,7 +97,7 @@ async def test_connection_subscribes_and_requests_report() -> None:
     assert report["event"] == "client-command"
     assert report["channel"] == "private-channel"
     assert json.loads(report["data"])["method"] == "do_shower_report"
-    assert received == []
+    assert received == [("pusher_internal:subscription_succeeded", {})]
 
 
 @pytest.mark.asyncio

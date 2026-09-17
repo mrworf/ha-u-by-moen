@@ -201,6 +201,7 @@ class _PusherConnection:
                     "Subscribed to Pusher updates for %s", subscription.serial_number
                 )
                 await self.request_report(subscription.serial_number)
+                await subscription.callback(event, {})
         elif isinstance(event, str):
             subscription = self._subscriptions.get(message.get("channel"))
             if subscription is not None:

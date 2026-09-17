@@ -113,3 +113,33 @@ async def test_capability_registration_accepts_empty_success() -> None:
     call = session.calls[0][2]
     assert call["params"] == {"name": "mobile_supports_pusher"}
     assert call["headers"] == {"Shower-Token": "shower-token"}
+
+
+@pytest.mark.asyncio
+async def test_preset_update_and_delete_match_android_endpoints() -> None:
+    session = FakeSession([FakeResponse(204), FakeResponse(204)])
+    api = MoenApi("user@example.com", "secret", session)
+    api._token = "user-token"
+    presets = [{"position": 1, "title": "One"}]
+
+    await api.update_presets(
+        "SERIAL",
+        {"api_server": "server", "name": "Main"},
+        presets,
+    )
+    await api.delete_preset("SERIAL", 3)
+
+    patch = session.calls[0]
+    assert patch[0] == "PATCH"
+    assert patch[1].endswith("/v4/showers/SERIAL")
+    assert patch[2]["json"] == {
+        "shower": {
+            "api_server": "server",
+            "active": True,
+            "name": "Main",
+            "presets": presets,
+        }
+    }
+    delete = session.calls[1]
+    assert delete[0] == "DELETE"
+    assert delete[1].endswith("/v2/showers/SERIAL/presets/3")

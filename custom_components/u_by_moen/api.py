@@ -81,6 +81,7 @@ class MoenApi:
         headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
         retry_auth: bool = True,
         allow_empty: bool = False,
     ) -> Any:
@@ -99,6 +100,7 @@ class MoenApi:
                 headers=request_headers,
                 params=params,
                 data=data,
+                json=json_body,
             ) as response:
                 if response.status == 401 and retry_auth:
                     self._token = None
@@ -115,6 +117,7 @@ class MoenApi:
                         headers=headers,
                         params=retry_params,
                         data=retry_data,
+                        json_body=json_body,
                         retry_auth=False,
                         allow_empty=allow_empty,
                     )
@@ -217,3 +220,32 @@ class MoenApi:
             )
         except MoenApiError as err:
             _LOGGER.debug("Could not register mobile Pusher capability: %s", err)
+
+    async def update_presets(
+        self,
+        serial_number: str,
+        device_details: dict[str, Any],
+        presets: list[dict[str, Any]],
+    ) -> None:
+        """Replace a shower's complete cloud preset list."""
+        await self._request_json(
+            "PATCH",
+            f"/v4/showers/{serial_number}",
+            json_body={
+                "shower": {
+                    "api_server": device_details.get("api_server"),
+                    "active": True,
+                    "name": device_details.get("name"),
+                    "presets": presets,
+                }
+            },
+            allow_empty=True,
+        )
+
+    async def delete_preset(self, serial_number: str, position: int) -> None:
+        """Delete one cloud preset using its current position."""
+        await self._request_json(
+            "DELETE",
+            f"/v2/showers/{serial_number}/presets/{position}",
+            allow_empty=True,
+        )

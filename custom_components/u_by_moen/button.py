@@ -4,12 +4,14 @@ import logging
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTR_PRESETS, DOMAIN
 from .coordinator import MoenDataUpdateCoordinator
+from .presets import preset_slots
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,16 +25,40 @@ async def async_setup_entry(
     coordinator: MoenDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
         "coordinator"
     ]
-    entities = []
+    entities: dict[tuple[str, int], MoenPresetButton] = {}
     for serial_number, device_data in coordinator.data.items():
-        # Add preset buttons
         presets = device_data.get(ATTR_PRESETS, [])
         for preset in presets:
             position = preset.get("position")
             if position:
-                entities.append(MoenPresetButton(coordinator, serial_number, position))
+                entities[(serial_number, position)] = MoenPresetButton(
+                    coordinator, serial_number, position
+                )
 
-    async_add_entities(entities)
+    async_add_entities(list(entities.values()))
+
+    @callback
+    def reconcile_presets() -> None:
+        """Keep preset buttons aligned with authoritative coordinator state."""
+        desired = preset_slots(coordinator.data)
+        new_entities = []
+        for key in desired - entities.keys():
+            entity = MoenPresetButton(coordinator, key[0], key[1])
+            entities[key] = entity
+            new_entities.append(entity)
+        if new_entities:
+            async_add_entities(new_entities)
+
+        registry = er.async_get(hass)
+        for key in set(entities) - desired:
+            entity = entities.pop(key)
+            if entity.hass is not None:
+                hass.async_create_task(entity.async_remove())
+            entity_id = registry.async_get_entity_id("button", DOMAIN, entity.unique_id)
+            if entity_id is not None:
+                registry.async_remove(entity_id)
+
+    entry.async_on_unload(coordinator.async_add_listener(reconcile_presets))
 
 
 class MoenPresetButton(CoordinatorEntity, ButtonEntity):

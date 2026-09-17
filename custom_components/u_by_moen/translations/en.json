@@ -24,9 +24,7 @@
       "init": {
         "title": "Select shower",
         "description": "Choose the shower whose presets you want to manage.",
-        "data": {
-          "serial_number": "Shower"
-        }
+        "data": {"serial_number": "Shower"}
       },
       "preset_menu": {
         "title": "Manage {device} presets",
@@ -42,61 +40,23 @@
       "create": {
         "title": "Create preset",
         "data": {
-          "title": "Title",
-          "greeting": "Greeting",
-          "target_temperature": "Target temperature",
-          "outlets": "Active outlets",
-          "ready_sounds_alert": "Sound alert when ready",
-          "ready_pushes_notification": "Moen app notification when ready",
-          "ready_pauses_water": "Pause water when ready",
-          "timer_enabled": "Timer enabled",
-          "timer_minutes": "Timer minutes",
-          "timer_seconds": "Timer seconds",
-          "timer_sounds_alert": "Sound alert when timer ends",
-          "timer_ends_shower": "Turn water off when timer ends"
+          "title": "Title", "greeting": "Greeting", "target_temperature": "Target temperature", "outlets": "Active outlets",
+          "ready_sounds_alert": "Sound alert when ready", "ready_pushes_notification": "Moen app notification when ready", "ready_pauses_water": "Pause water when ready",
+          "timer_enabled": "Timer enabled", "timer_minutes": "Timer minutes", "timer_seconds": "Timer seconds", "timer_sounds_alert": "Sound alert when timer ends", "timer_ends_shower": "Turn water off when timer ends"
         }
       },
-      "edit": {
-        "title": "Select preset to edit",
-        "data": {
-          "position": "Preset"
-        }
-      },
+      "edit": {"title": "Select preset to edit", "data": {"position": "Preset"}},
       "edit_preset": {
         "title": "Edit preset",
         "data": {
-          "title": "Title",
-          "greeting": "Greeting",
-          "target_temperature": "Target temperature",
-          "outlets": "Active outlets",
-          "ready_sounds_alert": "Sound alert when ready",
-          "ready_pushes_notification": "Moen app notification when ready",
-          "ready_pauses_water": "Pause water when ready",
-          "timer_enabled": "Timer enabled",
-          "timer_minutes": "Timer minutes",
-          "timer_seconds": "Timer seconds",
-          "timer_sounds_alert": "Sound alert when timer ends",
-          "timer_ends_shower": "Turn water off when timer ends"
+          "title": "Title", "greeting": "Greeting", "target_temperature": "Target temperature", "outlets": "Active outlets",
+          "ready_sounds_alert": "Sound alert when ready", "ready_pushes_notification": "Moen app notification when ready", "ready_pauses_water": "Pause water when ready",
+          "timer_enabled": "Timer enabled", "timer_minutes": "Timer minutes", "timer_seconds": "Timer seconds", "timer_sounds_alert": "Sound alert when timer ends", "timer_ends_shower": "Turn water off when timer ends"
         }
       },
-      "delete": {
-        "title": "Select preset to delete",
-        "data": {
-          "position": "Preset"
-        }
-      },
-      "delete_confirm": {
-        "title": "Delete {preset}?",
-        "description": "This removes the preset from the Moen cloud and may change which presets appear on the physical controller. Submit to confirm."
-      },
-      "move": {
-        "title": "Move preset",
-        "description": "Positions 1 and 2 are the presets available on the physical controller.",
-        "data": {
-          "position": "Preset",
-          "destination": "New position"
-        }
-      }
+      "delete": {"title": "Select preset to delete", "data": {"position": "Preset"}},
+      "delete_confirm": {"title": "Delete {preset}?", "description": "This removes the preset from the Moen cloud and may change which presets appear on the physical controller. Submit to confirm."},
+      "move": {"title": "Move preset", "description": "Positions 1 and 2 are the presets available on the physical controller.", "data": {"position": "Preset", "destination": "New position"}}
     },
     "error": {
       "cannot_connect": "Unable to update presets through the Moen service",
