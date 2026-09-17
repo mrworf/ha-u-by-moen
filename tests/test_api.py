@@ -149,6 +149,7 @@ async def test_preset_update_and_delete_match_android_endpoints() -> None:
         "SERIAL",
         {"api_server": "server", "name": "Main"},
         presets,
+        "create",
     )
     await api.delete_preset("SERIAL", 3)
 
@@ -160,7 +161,25 @@ async def test_preset_update_and_delete_match_android_endpoints() -> None:
             "api_server": "server",
             "active": True,
             "name": "Main",
-            "presets": presets,
+            "presets": [
+                {
+                    "outlets": [],
+                    "position": 1,
+                    "ready_pauses_water": False,
+                    "ready_pushes_notification": False,
+                    "ready_sounds_alert": True,
+                    "target_temperature": 0,
+                    "timer_enabled": False,
+                    "timer_ends_shower": False,
+                    "timer_length": 0,
+                    "timer_sounds_alert": True,
+                    "title": "One",
+                }
+            ],
+            "ready_sounds_alert": False,
+            "single_outlet_mode": False,
+            "source": "android",
+            "useCelsius": False,
         }
     }
     delete = session.calls[1]
@@ -197,6 +216,7 @@ async def test_http_error_retains_sanitized_response_context() -> None:
             "SERIAL",
             {"api_server": "server", "name": "Main"},
             [{"position": 1, "title": "Private title"}],
+            "edit",
         )
 
     error = raised.value

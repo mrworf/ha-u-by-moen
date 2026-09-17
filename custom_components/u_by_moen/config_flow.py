@@ -18,6 +18,7 @@ from .presets import (
     MAX_PRESETS,
     PresetConflictError,
     PresetValidationError,
+    clamp_preset_temperatures,
     create_preset,
     move_preset,
     preset_fingerprint,
@@ -341,13 +342,28 @@ class MoenOptionsFlow(config_entries.OptionsFlow):
         submitted: dict[str, Any],
     ) -> FlowResult:
         try:
+            mutation = (
+                "move"
+                if error_step == "move"
+                else "edit" if error_step == "edit_preset" else "create"
+            )
+            candidate = (
+                clamp_preset_temperatures(
+                    presets, int(self._device.get("max_temp", 115))
+                )
+                if mutation == "move"
+                else presets
+            )
             validate_presets(
-                presets,
+                candidate,
                 max_temperature=int(self._device.get("max_temp", 115)),
                 single_outlet_mode=bool(self._device.get("single_outlet_mode", False)),
             )
             result = await self._coordinator.async_replace_presets(
-                self._serial_number or "", self._baseline_fingerprint, presets
+                self._serial_number or "",
+                self._baseline_fingerprint,
+                candidate,
+                mutation,
             )
             return await self._mutation_complete(result.controller_synced)
         except (PresetConflictError, PresetValidationError, MoenApiError) as err:
@@ -403,7 +419,7 @@ class MoenOptionsFlow(config_entries.OptionsFlow):
             "ready_pushes_notification": False,
             "ready_sounds_alert": True,
             "timer_enabled": False,
-            "timer_minutes": 10,
+            "timer_minutes": 0,
             "timer_seconds": 0,
             "timer_ends_shower": False,
             "timer_sounds_alert": True,

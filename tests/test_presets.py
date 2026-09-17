@@ -4,6 +4,8 @@ import pytest
 
 from custom_components.u_by_moen.presets import (
     PresetValidationError,
+    android_preset_patch,
+    android_preset_payload,
     create_preset,
     move_preset,
     preset_detail_attributes,
@@ -75,6 +77,83 @@ def test_form_preserves_outlet_metadata_and_timer_fields() -> None:
         {"position": 1, "active": False, "icon_index": 2},
         {"position": 2, "active": True, "icon_index": 7},
     ]
+
+
+def test_android_preset_payload_is_closed_and_synchronizes_icons() -> None:
+    value = preset(1, "Morning")
+    value["server_only"] = "ignored"
+    value["outlets"][0].update({"icon": 5, "name": "Ignored"})
+
+    payload = android_preset_payload(value)
+
+    assert "server_only" not in payload
+    assert payload["outlets"][0] == {
+        "active": True,
+        "position": 1,
+        "icon_index": 5,
+        "icon": 5,
+    }
+    assert set(payload) == {
+        "greeting",
+        "outlets",
+        "position",
+        "ready_pauses_water",
+        "ready_pushes_notification",
+        "ready_sounds_alert",
+        "target_temperature",
+        "timer_enabled",
+        "timer_ends_shower",
+        "timer_length",
+        "timer_sounds_alert",
+        "title",
+    }
+
+
+def test_android_create_patch_includes_gson_primitive_defaults() -> None:
+    body = android_preset_patch(
+        {"api_server": "server", "name": "Main", "language": 1},
+        [preset(1)],
+        "create",
+    )
+
+    shower = body["shower"]
+    assert shower["source"] == "android"
+    assert shower["active"] is True
+    assert shower["ready_sounds_alert"] is False
+    assert shower["single_outlet_mode"] is False
+    assert shower["useCelsius"] is False
+    assert shower["api_server"] == "server"
+    assert shower["name"] == "Main"
+    assert "language" not in shower
+
+
+def test_android_move_patch_uses_full_settings_and_clamps_temperature() -> None:
+    value = preset(1)
+    value["target_temperature"] = 118
+    body = android_preset_patch(
+        {
+            "active": False,
+            "api_server": "server",
+            "name": "Main",
+            "temperature_units": 1,
+            "max_temp": 115,
+            "timezone_offset": -7,
+            "language": 0,
+            "off_on_idle": True,
+            "display_brightness": 2,
+            "observe_dst": False,
+            "ignored": "value",
+        },
+        [value],
+        "move",
+    )
+
+    shower = body["shower"]
+    assert shower["active"] is False
+    assert shower["presets"][0]["target_temperature"] == 115
+    assert shower["observe_dst"] is False
+    assert shower["timezone_offset"] == -7
+    assert "ignored" not in shower
 
 
 @pytest.mark.parametrize(

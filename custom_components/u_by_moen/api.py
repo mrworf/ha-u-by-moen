@@ -11,6 +11,7 @@ from typing import Any
 import aiohttp
 
 from .const import API_AUTHENTICATE, API_BASE_URL, API_SHOWER_DETAIL, API_SHOWERS
+from .presets import PresetMutation, android_preset_patch
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -350,19 +351,13 @@ class MoenApi:
         serial_number: str,
         device_details: dict[str, Any],
         presets: list[dict[str, Any]],
+        mutation: PresetMutation,
     ) -> None:
         """Replace a shower's complete cloud preset list."""
         await self._request_json(
             "PATCH",
             f"/v4/showers/{serial_number}",
-            json_body={
-                "shower": {
-                    "api_server": device_details.get("api_server"),
-                    "active": True,
-                    "name": device_details.get("name"),
-                    "presets": presets,
-                }
-            },
+            json_body=android_preset_patch(device_details, presets, mutation),
             allow_empty=True,
         )
 

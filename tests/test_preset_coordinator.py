@@ -59,8 +59,8 @@ class FakeApi:
     async def get_device_details(self, _serial):
         return self.snapshots.pop(0)
 
-    async def update_presets(self, serial, details, presets):
-        self.updated.append((serial, details, presets))
+    async def update_presets(self, serial, details, presets, mutation):
+        self.updated.append((serial, details, presets, mutation))
 
     async def delete_preset(self, serial, position):
         self.deleted.append((serial, position))
@@ -104,7 +104,7 @@ def coordinator(api, pusher, initial):
     result._command_locks = {}
     result._preset_locks = {}
     result._preset_sync_locks = {}
-    result._controller_sync_needed = set()
+    result._controller_sync_needed = {}
     return result
 
 
@@ -116,13 +116,32 @@ async def test_cloud_update_survives_controller_sync_failure() -> None:
     instance = coordinator(api, DisconnectedPusher(), original)
 
     result = await instance.async_replace_presets(
-        "SERIAL", preset_fingerprint(original), updated
+        "SERIAL", preset_fingerprint(original), updated, "edit"
     )
 
     assert result.controller_synced is False
     assert api.updated[0][2] == updated
+    assert api.updated[0][3] == "edit"
     assert instance.devices["SERIAL"]["presets"] == updated
     assert "SERIAL" in instance._controller_sync_needed
+
+
+@pytest.mark.asyncio
+async def test_move_clamps_temperature_and_uses_move_contract() -> None:
+    original = [preset(1, "One"), preset(2, "Two")]
+    original[0]["target_temperature"] = 118
+    refreshed = [preset(1, "One"), preset(2, "Two")]
+    refreshed[0]["target_temperature"] = 115
+    api = FakeApi([original, refreshed])
+    instance = coordinator(api, DisconnectedPusher(), original)
+
+    await instance.async_replace_presets(
+        "SERIAL", preset_fingerprint(original), original, "move"
+    )
+
+    assert api.updated[0][2][0]["target_temperature"] == 115
+    assert api.updated[0][3] == "move"
+    assert instance._controller_sync_needed == {"SERIAL": True}
 
 
 @pytest.mark.asyncio
@@ -136,7 +155,7 @@ async def test_successful_cloud_update_logs_safe_lifecycle(caplog) -> None:
         logging.DEBUG, logger="custom_components.u_by_moen.coordinator"
     ):
         await instance.async_replace_presets(
-            "SERIAL", preset_fingerprint(original), updated
+            "SERIAL", preset_fingerprint(original), updated, "edit"
         )
 
     assert "Starting preset replacement for device SERIAL (2 presets)" in caplog.text
@@ -155,7 +174,7 @@ async def test_stale_preset_baseline_prevents_write() -> None:
 
     with pytest.raises(PresetConflictError):
         await instance.async_replace_presets(
-            "SERIAL", preset_fingerprint(original), original
+            "SERIAL", preset_fingerprint(original), original, "edit"
         )
 
     assert api.updated == []
@@ -203,11 +222,52 @@ async def test_controller_sync_uses_only_first_two_and_confirms() -> None:
     waiter.put_nowait({"presets": presets[:2]})
 
     assert await task is True
+    expected = [
+        {
+            **item,
+            "outlets": [
+                {**outlet, "icon": outlet["icon_index"]}
+                for outlet in item["outlets"]
+            ],
+        }
+        for item in presets[:2]
+    ]
     assert pusher.messages == [
         (
             "SERIAL",
             "client-state-desired",
-            {"type": "preset", "data": presets[:2]},
+            {"type": "preset", "data": expected},
         )
     ]
     assert pusher.reports == 1
+
+
+@pytest.mark.asyncio
+async def test_move_sends_all_presets() -> None:
+    presets = [preset(1, "One"), preset(2, "Two"), preset(3, "Three")]
+    pusher = CapturingPusher()
+    instance = coordinator(FakeApi([]), pusher, presets)
+
+    task = asyncio.create_task(
+        instance._async_sync_controller_presets(
+            "SERIAL", presets, send_all=True
+        )
+    )
+    await pusher.sent.wait()
+    waiter = next(iter(instance._push_waiters["SERIAL"]))
+    waiter.put_nowait({"presets": presets[:2]})
+
+    assert await task is True
+    assert len(pusher.messages[0][2]["data"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_move_retains_full_list_retry_scope() -> None:
+    presets = [preset(1, "One"), preset(2, "Two"), preset(3, "Three")]
+    instance = coordinator(FakeApi([]), DisconnectedPusher(), presets)
+
+    assert await instance._async_sync_controller_presets(
+        "SERIAL", presets, send_all=True
+    ) is False
+
+    assert instance._controller_sync_needed == {"SERIAL": True}

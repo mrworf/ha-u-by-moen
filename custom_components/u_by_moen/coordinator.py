@@ -25,7 +25,10 @@ from .const import DOMAIN, UPDATE_INTERVAL
 from .presets import (
     MIN_PRESETS,
     PresetConflictError,
+    PresetMutation,
     PresetValidationError,
+    android_preset_payload,
+    clamp_preset_temperatures,
     normalize_positions,
     preset_fingerprint,
     validate_presets,
@@ -67,7 +70,7 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
         self._command_locks: dict[str, asyncio.Lock] = {}
         self._preset_locks: dict[str, asyncio.Lock] = {}
         self._preset_sync_locks: dict[str, asyncio.Lock] = {}
-        self._controller_sync_needed: set[str] = set()
+        self._controller_sync_needed: dict[str, bool] = {}
 
     async def async_start_pusher(self) -> None:
         """Register known devices and start passive live synchronization."""
@@ -81,7 +84,7 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
                     await self._async_handle_pusher_event(serial, event, payload)
 
                 await self.pusher.register_device(details, callback)
-                self._controller_sync_needed.add(serial_number)
+                self._controller_sync_needed[serial_number] = False
             except (MoenApiError, ValueError) as err:
                 _LOGGER.warning(
                     "Pusher unavailable for %s; using REST fallback: %s",
@@ -159,6 +162,7 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
         serial_number: str,
         baseline_fingerprint: str,
         presets: list[dict[str, Any]],
+        mutation: PresetMutation,
     ) -> PresetMutationResult:
         """Replace the cloud preset list if the form baseline is still current."""
         lock = self._preset_locks.setdefault(serial_number, asyncio.Lock())
@@ -170,17 +174,28 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
             )
             current = await self.api.get_device_details(serial_number)
             self._assert_preset_baseline(current, baseline_fingerprint)
+            candidate = (
+                clamp_preset_temperatures(
+                    presets, int(current.get("max_temp", 115))
+                )
+                if mutation == "move"
+                else presets
+            )
             validated = validate_presets(
-                presets,
+                candidate,
                 max_temperature=int(current.get("max_temp", 115)),
                 single_outlet_mode=bool(current.get("single_outlet_mode", False)),
             )
-            await self.api.update_presets(serial_number, current, validated)
+            await self.api.update_presets(
+                serial_number, current, validated, mutation
+            )
             _LOGGER.debug("Cloud preset replacement accepted for %s", serial_number)
             refreshed = await self._async_refresh_device(serial_number)
             _LOGGER.debug("Refreshed %s after preset replacement", serial_number)
             synced = await self._async_sync_controller_presets(
-                serial_number, refreshed.get("presets", [])
+                serial_number,
+                refreshed.get("presets", []),
+                send_all=mutation == "move",
             )
             _LOGGER.debug(
                 "Preset replacement complete for %s; controller sync %s",
@@ -248,17 +263,29 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
         if device is None:
             return
         await self._async_sync_controller_presets(
-            serial_number, device.get("presets", [])
+            serial_number,
+            device.get("presets", []),
+            send_all=self._controller_sync_needed.get(serial_number, False),
         )
 
     async def _async_sync_controller_presets(
-        self, serial_number: str, presets: list[dict[str, Any]]
+        self,
+        serial_number: str,
+        presets: list[dict[str, Any]],
+        *,
+        send_all: bool = False,
     ) -> bool:
         """Synchronize controller slots 1-2 without activating the shower."""
-        core_presets = normalize_positions(presets)[:2]
+        normalized = normalize_positions(presets)
+        core_presets = [android_preset_payload(preset) for preset in normalized[:2]]
         if len(core_presets) < MIN_PRESETS:
-            self._controller_sync_needed.add(serial_number)
+            self._controller_sync_needed[serial_number] = send_all
             return False
+        outgoing_presets = (
+            [android_preset_payload(preset) for preset in normalized]
+            if send_all
+            else core_presets
+        )
         lock = self._preset_sync_locks.setdefault(serial_number, asyncio.Lock())
         async with lock:
             waiter: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -267,20 +294,23 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
                 await self.pusher.send_client_event(
                     serial_number,
                     "client-state-desired",
-                    {"type": "preset", "data": core_presets},
+                    {"type": "preset", "data": outgoing_presets},
                 )
                 await self.pusher.request_report(serial_number)
 
                 def expected(update: dict[str, Any]) -> bool:
                     reported = update.get("presets")
                     return isinstance(reported, list) and preset_fingerprint(
-                        normalize_positions(reported)[:2]
+                        [
+                            android_preset_payload(preset)
+                            for preset in normalize_positions(reported)[:2]
+                        ]
                     ) == preset_fingerprint(core_presets)
 
                 if await self._async_wait_for_confirmation(
                     waiter, expected, PRESET_CONFIRM_TIMEOUT
                 ):
-                    self._controller_sync_needed.discard(serial_number)
+                    self._controller_sync_needed.pop(serial_number, None)
                     return True
             except MoenPusherError as err:
                 _LOGGER.debug(
@@ -292,7 +322,7 @@ class MoenDataUpdateCoordinator(DataUpdateCoordinator):
                     waiters.discard(waiter)
                     if not waiters:
                         self._push_waiters.pop(serial_number, None)
-            self._controller_sync_needed.add(serial_number)
+            self._controller_sync_needed[serial_number] = send_all
             return False
 
     async def async_set_power(self, serial_number: str, turn_on: bool) -> None:

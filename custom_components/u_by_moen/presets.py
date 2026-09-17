@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 MIN_PRESETS = 2
 MAX_PRESETS = 10
 MIN_TEMPERATURE_F = 60
 MAX_TIMER_SECONDS = 3599
+
+PresetMutation: TypeAlias = Literal["create", "edit", "move"]
 
 PRESET_BOOLEAN_FIELDS = (
     "ready_pauses_water",
@@ -140,6 +142,107 @@ def normalize_positions(
     for position, preset in enumerate(normalized, start=1):
         preset["position"] = position
     return normalized
+
+
+def clamp_preset_temperatures(
+    presets: list[dict[str, Any]], max_temperature: int
+) -> list[dict[str, Any]]:
+    """Clamp preset temperatures as Android does for a full settings update."""
+    clamped = copy_presets(presets)
+    for preset in clamped:
+        temperature = preset.get("target_temperature")
+        if isinstance(temperature, int) and not isinstance(temperature, bool):
+            preset["target_temperature"] = min(temperature, max_temperature)
+    return clamped
+
+
+def android_outlet_payload(outlet: dict[str, Any]) -> dict[str, Any]:
+    """Serialize only the fields emitted by Android's Outlet model."""
+    icon = outlet.get("icon")
+    if not isinstance(icon, int) or isinstance(icon, bool) or icon == 0:
+        icon = outlet.get("icon_index", 0)
+    if not isinstance(icon, int) or isinstance(icon, bool):
+        icon = 0
+    position = outlet.get("position", 0)
+    if not isinstance(position, int) or isinstance(position, bool):
+        position = 0
+    return {
+        "active": bool(outlet.get("active", False)),
+        "position": position,
+        "icon_index": icon,
+        "icon": icon,
+    }
+
+
+def android_preset_payload(preset: dict[str, Any]) -> dict[str, Any]:
+    """Serialize a preset using Android model fields and primitive defaults."""
+    payload: dict[str, Any] = {
+        "outlets": [
+            android_outlet_payload(outlet)
+            for outlet in preset.get("outlets", [])
+            if isinstance(outlet, dict)
+        ],
+        "position": preset.get("position", 0),
+        "ready_pauses_water": bool(preset.get("ready_pauses_water", False)),
+        "ready_pushes_notification": bool(
+            preset.get("ready_pushes_notification", False)
+        ),
+        "ready_sounds_alert": bool(preset.get("ready_sounds_alert", True)),
+        "target_temperature": preset.get("target_temperature", 0),
+        "timer_enabled": bool(preset.get("timer_enabled", False)),
+        "timer_ends_shower": bool(preset.get("timer_ends_shower", False)),
+        "timer_length": preset.get("timer_length", 0),
+        "timer_sounds_alert": bool(preset.get("timer_sounds_alert", True)),
+    }
+    for field in ("greeting", "title"):
+        if preset.get(field) is not None:
+            payload[field] = preset[field]
+    return payload
+
+
+def android_preset_patch(
+    device: dict[str, Any],
+    presets: list[dict[str, Any]],
+    mutation: PresetMutation,
+) -> dict[str, Any]:
+    """Build the shower PATCH body produced by the Android client."""
+    if mutation not in ("create", "edit", "move"):
+        raise ValueError(f"Unsupported preset mutation: {mutation}")
+
+    serialized_presets = presets
+    if mutation == "move":
+        serialized_presets = clamp_preset_temperatures(
+            presets, int(device.get("max_temp", 115))
+        )
+    active = device.get("active", True)
+    shower: dict[str, Any] = {
+        "active": active if mutation == "move" and isinstance(active, bool) else True,
+        "presets": [
+            android_preset_payload(preset) for preset in serialized_presets
+        ],
+        # Gson serializes these primitive defaults from a new ShowerDetail.
+        "ready_sounds_alert": False,
+        "single_outlet_mode": False,
+        "source": "android",
+        "useCelsius": False,
+    }
+    fields = ["api_server", "name"]
+    if mutation == "move":
+        fields.extend(
+            (
+                "temperature_units",
+                "max_temp",
+                "timezone_offset",
+                "language",
+                "off_on_idle",
+                "display_brightness",
+                "observe_dst",
+            )
+        )
+    for field in fields:
+        if device.get(field) is not None:
+            shower[field] = device[field]
+    return {"shower": shower}
 
 
 def validate_presets(

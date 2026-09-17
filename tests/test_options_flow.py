@@ -45,12 +45,12 @@ class FakeCoordinator:
         self.conflict = False
         self.api_error = None
 
-    async def async_replace_presets(self, serial, baseline, presets):
+    async def async_replace_presets(self, serial, baseline, presets, mutation):
         if self.api_error is not None:
             raise self.api_error
         if self.conflict:
             raise PresetConflictError("changed")
-        self.replacements.append((serial, baseline, presets))
+        self.replacements.append((serial, baseline, presets, mutation))
         self.devices[serial]["presets"] = presets
         return PresetMutationResult(True)
 
@@ -89,6 +89,17 @@ def form_values(title="Three"):
     }
 
 
+def test_new_preset_defaults_match_android_timer_default() -> None:
+    flow, _ = make_flow({"SERIAL": device()})
+    flow._serial_number = "SERIAL"
+
+    defaults = flow._new_preset_defaults()
+
+    assert defaults["timer_enabled"] is False
+    assert defaults["timer_minutes"] == 0
+    assert defaults["timer_seconds"] == 0
+
+
 @pytest.mark.asyncio
 async def test_single_device_create_returns_to_menu() -> None:
     flow, coordinator = make_flow({"SERIAL": device()})
@@ -101,8 +112,9 @@ async def test_single_device_create_returns_to_menu() -> None:
     assert form["step_id"] == "create"
     assert result["type"] == "menu"
     assert "synchronized" in result["description_placeholders"]["status"]
-    serial, _, presets = coordinator.replacements[0]
+    serial, _, presets, mutation = coordinator.replacements[0]
     assert serial == "SERIAL"
+    assert mutation == "create"
     assert [item["title"] for item in presets] == ["One", "Two", "Three"]
     assert presets[-1]["timer_length"] == 330
 
@@ -115,6 +127,22 @@ async def test_multiple_devices_require_selection() -> None:
 
     assert result["type"] == "form"
     assert result["step_id"] == "init"
+
+
+@pytest.mark.asyncio
+async def test_move_uses_android_contract_and_clamps_to_current_maximum() -> None:
+    details = device()
+    details["max_temp"] = 99
+    flow, coordinator = make_flow({"SERIAL": details})
+    await flow.async_step_init()
+    await flow.async_step_move()
+
+    result = await flow.async_step_move({"position": 1, "destination": 2})
+
+    assert result["type"] == "menu"
+    _, _, presets, mutation = coordinator.replacements[0]
+    assert mutation == "move"
+    assert all(item["target_temperature"] == 99 for item in presets)
 
 
 @pytest.mark.asyncio
