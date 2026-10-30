@@ -29,7 +29,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     pusher = MoenPusherTransport(
         api,
         session,
-        create_task=lambda coroutine: hass.async_create_task(
+        # Background task, not a normal one: _supervise() runs a `while self._running`
+        # reconnect loop for the lifetime of the entry and never returns. Home Assistant's
+        # async_start awaits the tasks registered by async_create_task before it finishes
+        # starting, so a task that never completes holds startup open until the bootstrap
+        # timeout fires - roughly five minutes - and logs
+        # "Setup timed out for bootstrap waiting on ... U by Moen Pusher supervisor".
+        # async_create_background_task is the documented API for exactly this shape: it
+        # "will not block startup" and is cancelled automatically on shutdown.
+        create_task=lambda coroutine: hass.async_create_background_task(
             coroutine, "U by Moen Pusher supervisor"
         ),
     )
